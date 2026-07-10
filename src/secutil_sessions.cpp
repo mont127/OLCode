@@ -80,8 +80,14 @@ std::vector<SessionInfo> list_saved_sessions() {
         info.name = filename;
         info.path = full;
 
+        // BSD/macOS spell the nanosecond mtime st_mtimespec; POSIX/Linux use st_mtim.
+#if defined(__APPLE__)
         info.mtime = static_cast<double>(st.st_mtimespec.tv_sec) +
                      static_cast<double>(st.st_mtimespec.tv_nsec) / 1e9;
+#else
+        info.mtime = static_cast<double>(st.st_mtim.tv_sec) +
+                     static_cast<double>(st.st_mtim.tv_nsec) / 1e9;
+#endif
         info.size  = static_cast<long>(st.st_size);
         items.push_back(std::move(info));
     }
