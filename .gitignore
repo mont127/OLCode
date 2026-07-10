@@ -9,3 +9,6 @@ compile_commands.json
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# graphify knowledge-graph output (regenerated locally; not source)
+graphify-out/
