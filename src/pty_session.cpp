@@ -1,6 +1,12 @@
 #include "pty_session.hpp"
 
-#include <util.h>
+#if defined(__APPLE__)
+#include <util.h>       // forkpty
+#elif defined(__linux__)
+#include <pty.h>        // forkpty (link libutil)
+#else
+#include <libutil.h>    // BSD
+#endif
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>

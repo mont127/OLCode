@@ -11,7 +11,9 @@
 
 #include <unistd.h>
 #include <sys/stat.h>
-#include <mach-o/dyld.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>   // _NSGetExecutablePath
+#endif
 
 namespace ocli {
 
@@ -60,14 +62,21 @@ bool contains(const std::string& s, const std::string& needle) {
 }
 
 std::string current_executable_path() {
+#if defined(__APPLE__)
     uint32_t size = 0;
     _NSGetExecutablePath(nullptr, &size);
     std::string buf(size, '\0');
     if (_NSGetExecutablePath(buf.data(), &size) != 0) {
         return std::string();
     }
-
     if (auto pos = buf.find('\0'); pos != std::string::npos) buf.resize(pos);
+#else
+    // Linux: the running binary is /proc/self/exe.
+    std::string buf(4096, '\0');
+    ssize_t n = ::readlink("/proc/self/exe", buf.data(), buf.size());
+    if (n <= 0) return std::string();
+    buf.resize(static_cast<std::size_t>(n));
+#endif
     std::error_code ec;
     auto canon = std::filesystem::weakly_canonical(std::filesystem::path(buf), ec);
     if (!ec) return canon.string();

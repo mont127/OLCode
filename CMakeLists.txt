@@ -39,3 +39,10 @@ target_link_libraries(ocli PRIVATE
 )
 
 # macOS: realpath/getaddrinfo/termios/pty are in libc/libSystem — nothing extra needed.
+# Linux: forkpty/openpty live in libutil.
+if(NOT APPLE)
+  find_library(UTIL_LIBRARY NAMES util)
+  if(UTIL_LIBRARY)
+    target_link_libraries(ocli PRIVATE ${UTIL_LIBRARY})
+  endif()
+endif()

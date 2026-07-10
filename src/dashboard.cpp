@@ -829,8 +829,12 @@ void route(LOREA& agent, int fd, const std::string& method,
 }
 
 void handle_client(LOREA& agent, int fd, int port) {
+#ifdef SO_NOSIGPIPE
+    // macOS/BSD: suppress SIGPIPE per-socket. On Linux this option doesn't exist;
+    // serve() ignores SIGPIPE process-wide instead, so writes just return EPIPE.
     int set = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &set, sizeof(set));
+#endif
     std::string method;
     std::string path;
     std::string body;

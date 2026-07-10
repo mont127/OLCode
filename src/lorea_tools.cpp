@@ -21,7 +21,13 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/select.h>
-#include <util.h>
+#if defined(__APPLE__)
+#include <util.h>       // openpty/forkpty
+#elif defined(__linux__)
+#include <pty.h>        // openpty/forkpty (link libutil)
+#else
+#include <libutil.h>    // BSD
+#endif
 #include <errno.h>
 
 namespace ocli {
