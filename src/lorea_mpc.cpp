@@ -5,7 +5,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <filesystem>
 #include <initializer_list>
+#include <sys/stat.h>
 #include <thread>
 
 #include <termios.h>
@@ -362,6 +365,7 @@ void LOREA::connect_mpc_command(const std::string& arg_text) {
         ? std::string(" ") + Colors::DIM + Colors::GRAY + "v" + *mpc_version + Colors::RESET
         : std::string();
     log_ok(std::string("Connected to MPC server ") + Colors::WHITE + *mpc_url + Colors::RESET + vsuffix);
+    save_mpc_connection();   // persist url+token for auto-reconnect on next launch
     print_mpc_status(&status);
     sync_mpc_selection(status);
     if (!opts.status && !opts.no_menu) {
@@ -369,11 +373,79 @@ void LOREA::connect_mpc_command(const std::string& arg_text) {
     }
 }
 
+namespace {
+std::string mpc_conn_path() { return expanduser("~/.config/lorea/mpc_connection.json"); }
+}  // namespace
+
+// Persist the current MPC url + token so a later launch reconnects without
+// re-typing (written 0600 since it holds a bearer token).
+void LOREA::save_mpc_connection() {
+    if (!mpc_url || mpc_url->empty()) return;
+    try {
+        std::filesystem::path p = mpc_conn_path();
+        std::filesystem::create_directories(p.parent_path());
+        json j;
+        j["url"] = *mpc_url;
+        if (mpc_token && !mpc_token->empty()) j["token"] = *mpc_token;
+        std::ofstream ofs(p, std::ios::trunc);
+        if (ofs) { ofs << j.dump(2); ofs.close(); ::chmod(p.c_str(), 0600); }
+    } catch (...) {}
+}
+
+bool LOREA::load_mpc_connection(std::string& url_out, std::string& token_out) {
+    try {
+        std::ifstream ifs(mpc_conn_path());
+        if (!ifs) return false;
+        json j; ifs >> j;
+        if (!j.is_object() || !j.contains("url")) return false;
+        url_out = j["url"].get<std::string>();
+        token_out = j.value("token", std::string(""));
+        return !url_out.empty();
+    } catch (...) { return false; }
+}
+
+void LOREA::clear_mpc_connection() {
+    std::error_code ec;
+    std::filesystem::remove(mpc_conn_path(), ec);
+}
+
+// Set the connection and verify it by fetching /status. Returns true only if the
+// server answers (so a stale/unreachable url leaves us on the local backend).
+// Shared by /connect, auto-reconnect, and the spawn-agent worker.
+bool LOREA::activate_mpc(const std::string& url, const std::string& token) {
+    mpc_url = url;
+    mpc_token = token.empty() ? std::nullopt : std::optional<std::string>(token);
+    json status;
+    try {
+        status = mpc_request("GET", "/status", nullptr, nullptr, nullptr, 6);
+    } catch (...) {
+        mpc_url = std::nullopt;
+        mpc_token = std::nullopt;
+        mpc_features = json::object();
+        return false;
+    }
+    json featv = (status.is_object() && status.contains("features")) ? status["features"] : json(nullptr);
+    mpc_features = featv.is_object() ? featv : json::object();
+    if (status.is_object() && status.contains("version") && !status["version"].is_null())
+        mpc_version = json_scalar_str(status["version"]);
+    sync_mpc_selection(status);
+    return true;
+}
+
+// On startup: reconnect to a previously saved connection if it is still reachable.
+void LOREA::auto_reconnect_mpc() {
+    std::string url, token;
+    if (!load_mpc_connection(url, token)) return;
+    if (activate_mpc(url, token))
+        log_ok(std::string("Reconnected to saved MPC server ") + Colors::WHITE + *mpc_url + Colors::RESET);
+}
+
 void LOREA::disconnect_mpc() {
     mpc_url = std::nullopt;
     mpc_token = std::nullopt;
     mpc_features = json::object();
     mpc_version = std::nullopt;
+    clear_mpc_connection();
 }
 
 bool LOREA::mpc_supports(const std::string& feature) {

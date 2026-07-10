@@ -48,6 +48,11 @@ public:
                       long timeout_s = MPC_REQUEST_TIMEOUT);
     void  connect_mpc_command(const std::string& arg_text = "");
     void  disconnect_mpc();
+    void  save_mpc_connection();
+    bool  load_mpc_connection(std::string& url, std::string& token);
+    void  clear_mpc_connection();
+    void  auto_reconnect_mpc();
+    bool  activate_mpc(const std::string& url, const std::string& token);
     bool  mpc_supports(const std::string& feature);
     void  print_mpc_status(const json* status = nullptr);
     void  print_mpc_downloads();
@@ -248,6 +253,7 @@ public:
     std::optional<std::string>  mpc_version;
     std::string                 tool_access = "full";
     bool                        allow_spawn_agents = true;
+    bool                        web_search_enabled = true;
     bool                        non_interactive = false;
     std::string                 PLAN_PROMPT;
     std::vector<Message>        messages;

@@ -351,6 +351,15 @@ json LOREA::spawn_agent_chat(const json& agent, const std::string& shared_contex
     json cv = jget(agent, "context");
     std::string agent_context = py_strip(py_truthy(cv) ? py_str(cv) : "");
 
+    json wsv = jget(agent, "web_search");
+    bool ws_enabled = wsv.is_boolean() ? wsv.get<bool>() : true;
+
+    json ev = jget(agent, "effort");
+    std::string effort = py_truthy(ev) ? py_str(ev) : std::string("basic");
+
+    json wkv = jget(agent, "workspace");
+    std::string workspace = py_truthy(wkv) ? py_strip(py_str(wkv)) : std::string("");
+
     if (task.empty()) {
         return json{{"name", name}, {"status", "error"}, {"response", "Missing agent task."}};
     }
@@ -365,7 +374,16 @@ json LOREA::spawn_agent_chat(const json& agent, const std::string& shared_contex
         {"url", url},
         {"tool_access", tool_access},
         {"max_steps", max_steps},
+        {"web_search", ws_enabled},
+        {"effort_level", effort},
+        {"workspace", workspace},
     };
+    // If this agent is connected to an MPC server, route the worker's turn
+    // through it too (so app/dashboard chat uses the connected remote model).
+    if (mpc_url && !mpc_url->empty()) {
+        payload["mpc_url"] = *mpc_url;
+        if (mpc_token && !mpc_token->empty()) payload["mpc_token"] = *mpc_token;
+    }
 
     std::vector<std::string> cmd = {current_executable_path(), "--spawn-agent-worker", "--skip-install"};
 

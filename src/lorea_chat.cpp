@@ -308,6 +308,10 @@ bool LOREA::process_chat() {
         avail.erase(std::remove(avail.begin(), avail.end(), std::string("spawn_agents")),
                     avail.end());
     }
+    if (!web_search_enabled) {
+        avail.erase(std::remove(avail.begin(), avail.end(), std::string("web_search")),
+                    avail.end());
+    }
     std::set<std::string> avail_set(avail.begin(), avail.end());
     auto in_avail = [&](const std::string& n) { return avail_set.count(n) != 0; };
 
@@ -355,7 +359,7 @@ bool LOREA::process_chat() {
         tools.push_back(json::parse(CREATE_PLAN_JSON));
         tools.push_back(json::parse(UPDATE_TASK_JSON));
     }
-    if (tool_access == "read_only" || !allow_spawn_agents) {
+    if (tool_access == "read_only" || !allow_spawn_agents || !web_search_enabled) {
         json filtered = json::array();
         for (auto& t : tools) {
             std::string nm;
@@ -1108,7 +1112,7 @@ bool LOREA::process_chat() {
                 }
             }
 
-            if (tool_calls.empty() && implies_web_search(content)) {
+            if (tool_calls.empty() && web_search_enabled && implies_web_search(content)) {
                 int prior_searches = 0;
                 for (auto& m : messages)
                     if (get_str(m, "role") == "tool" && get_str(m, "name") == "web_search")

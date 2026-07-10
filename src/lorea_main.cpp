@@ -1,14 +1,19 @@
 #include "lorea.hpp"
 #include "terminal.hpp"
+#include "live_view.hpp"
+#include "dashboard.hpp"
 
 #include <algorithm>
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <filesystem>
+#include <unistd.h>
 
 namespace ocli {
 
@@ -24,6 +29,18 @@ public:
 private:
     std::streambuf* old_;
 };
+
+std::terminate_handler g_prev_terminate = nullptr;
+
+// On any uncaught exception / std::terminate, restore the terminal before the
+// process aborts so a crash can't leave the user's shell in the alt screen with
+// mouse reporting on. Then chain to the previous handler (which prints the
+// standard "terminating due to uncaught exception" line and aborts).
+void ocli_terminate_handler() {
+    live_emergency_restore();
+    if (g_prev_terminate) g_prev_terminate();
+    std::abort();
+}
 
 bool jtruthy(const json& v) {
     if (v.is_null())            return false;
@@ -151,6 +168,28 @@ int run_spawn_agent_worker() {
         max_steps = 3;
     }
 
+    json vws = jget(request, "web_search");
+    bool ws_enabled = vws.is_boolean() ? vws.get<bool>() : true;
+
+    json veff = jget(request, "effort_level");
+    std::string effort = jtruthy(veff) ? jstr(veff) : std::string("basic");
+    if (!effort_levels().count(effort)) effort = "basic";
+
+    json vwk = jget(request, "workspace");
+    std::string workspace = strip(jtruthy(vwk) ? jstr(vwk) : std::string(""));
+    if (!workspace.empty()) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(workspace, ec) || ::chdir(workspace.c_str()) != 0) {
+            json err = {
+                {"status",   "error"},
+                {"response", std::string("Invalid workspace directory: ") + workspace},
+                {"log",      ""},
+            };
+            std::cout << err.dump() << std::endl;
+            return 1;
+        }
+    }
+
     std::ostringstream log_buffer;
     std::string status = "ok";
     std::string response_text;
@@ -164,6 +203,16 @@ int run_spawn_agent_worker() {
             agent->tool_access = tool_access;
             agent->allow_spawn_agents = false;
             agent->non_interactive = true;
+            agent->effort_level = effort;             // consumed by ephemeral_reminders()/effort_message()
+            agent->web_search_enabled = ws_enabled;   // consumed by process_chat() tool filter
+
+            json vmurl = jget(request, "mpc_url");
+            if (jtruthy(vmurl)) {
+                std::string murl = jstr(vmurl);
+                json vmtok = jget(request, "mpc_token");
+                std::string mtok = jtruthy(vmtok) ? jstr(vmtok) : std::string("");
+                agent->activate_mpc(murl, mtok);      // route this turn through the MPC server
+            }
 
             std::string sys0;
             if (!agent->messages.empty() && agent->messages[0].is_object() &&
@@ -257,6 +306,7 @@ int run_spawn_agent_worker() {
 }
 
 int run_main(const std::vector<std::string>& argv) {
+    g_prev_terminate = std::set_terminate(ocli_terminate_handler);
     const std::string prog = to_lower_ascii(std::string(CLI_COMMAND_NAME));
     static const std::vector<std::string> backend_choices = {
         "ollama", "llama-cpp", "mlx", "airllm", "openai", "anthropic"};
@@ -264,7 +314,7 @@ int run_main(const std::vector<std::string>& argv) {
     const std::string choices_str =
         "ollama, llama-cpp, mlx, airllm, openai, anthropic";
     const std::string usage =
-        "usage: " + prog + " [-h] [--model MODEL] [--auto]\n"
+        "usage: " + prog + " [-h] [--model MODEL] [--auto] [--app[=PORT]]\n"
         "        [--backend {" + choices_str + "}]\n"
         "        [--url URL] [--skip-install]";
 
@@ -280,6 +330,8 @@ int run_main(const std::vector<std::string>& argv) {
     bool        has_url = false;
     bool        skip_install = false;
     bool        spawn_worker = false;
+    bool        app_mode = false;
+    int         app_port = 8730;
 
     for (std::size_t i = 0; i < argv.size(); ++i) {
         const std::string& a = argv[i];
@@ -310,6 +362,12 @@ int run_main(const std::vector<std::string>& argv) {
             model = need_value("--model");
         } else if (key == "--auto") {
             auto_mode = true;
+        } else if (key == "--app") {
+            app_mode = true;
+            if (has_inline) {
+                try { int p = std::stoi(inlineval); if (p > 0 && p <= 65535) app_port = p; }
+                catch (...) {}
+            }
         } else if (key == "--backend") {
             backend = need_value("--backend");
             if (std::find(backend_choices.begin(), backend_choices.end(), backend) ==
@@ -344,10 +402,33 @@ int run_main(const std::vector<std::string>& argv) {
         ? model
         : BACKEND_DEFAULT_MODELS.at(backend);
 
+    if (app_mode) {
+        // App shell only: default to the Qwythos model via the registered ollama
+        // tag, but allow overrides so a missing tag doesn't hard-fail. Never runs
+        // for a plain `ocli` invocation, so the CLI is unchanged.
+        backend = "ollama";
+        chosen_model = "qwythos";
+        if (const char* b = std::getenv("LOREA_APP_BACKEND")) { if (*b) backend = b; }
+        if (const char* m = std::getenv("LOREA_APP_MODEL"))   { if (*m) chosen_model = m; }
+    }
+
     std::optional<std::string> url_opt;
     if (has_url) url_opt = url;
 
     LOREA agent(chosen_model, auto_mode, backend, url_opt);
+    agent.auto_reconnect_mpc();   // restore a previously saved MPC connection, if reachable
+    if (app_mode) {
+        // Headless server for the LOREA.app shell: no interactive REPL (there is no
+        // TTY when spawned by the app). Serve the dashboard and block; the detached
+        // serve() thread holds &agent by reference, so agent must outlive this loop.
+        if (!start_dashboard(agent, app_port)) {
+            std::cerr << prog << ": dashboard failed to bind port " << app_port << "\n";
+            return 1;
+        }
+        std::cerr << prog << ": LOREA app server on http://127.0.0.1:" << app_port << "\n";
+        for (;;) ::pause();   // block forever; SIGTERM (app quit) ends the process
+        return 0;
+    }
     agent.run();
     return 0;
 }

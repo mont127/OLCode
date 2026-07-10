@@ -32,6 +32,13 @@ void InterruptionManager::start_listening() {
     if (active_) return;
     interrupted.clear();
 
+    if (delegated.load()) {
+        // The live view reads stdin and will set `interrupted` for us. Don't
+        // touch the terminal or start a competing reader thread.
+        active_ = true;
+        return;
+    }
+
     if (!tc_getattr(STDIN_FILENO, old_settings_)) return;
     have_old_settings_ = true;
     if (!set_cbreak(STDIN_FILENO)) return;

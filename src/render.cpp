@@ -679,6 +679,15 @@ Spinner::~Spinner() {
 }
 
 void Spinner::start() {
+    // Guard against double-start. std::thread's move-assignment calls
+    // std::terminate() if the destination still owns a joinable thread, so a
+    // second start() without an intervening stop() would abort the whole
+    // process (this happened on MPC stream retries, where the retry handler
+    // re-armed the spinner while the previous spin thread was still running).
+    if (thread_.joinable()) {
+        running_ = false;
+        thread_.join();
+    }
     running_ = true;
     thread_ = std::thread(&Spinner::spin, this);
 }

@@ -22,6 +22,11 @@ public:
 
     Event interrupted;
 
+    // When true, another component (the live split-pane view) owns stdin and
+    // sets `interrupted` for us. start_listening() then skips its own terminal
+    // setup and reader thread so the two don't fight over the same fd.
+    std::atomic<bool> delegated{false};
+
 private:
     void listen_loop();
 

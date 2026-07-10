@@ -1,5 +1,6 @@
 #include "live_view.hpp"
 #include "pty_session.hpp"
+#include "interrupt.hpp"
 
 #include <termios.h>
 #include <unistd.h>
@@ -58,14 +59,21 @@ std::string pulse_hot(unsigned long f) {
   return lerp_color(6, 34, 22, 210, 255, 240, t, 30);
 }
 
-std::string pulse_meter(unsigned long f, int width) {
+// A single dot gliding back and forth on a faint track, with a soft glow beside
+// it. Replaces the old block-meter bars in the pane headers.
+std::string moving_dot(unsigned long f, int width) {
+  if (width < 1) width = 1;
+  int span = width - 1;
+  if (span < 1) span = 1;
+  int period = 2 * span;
+  int phase = static_cast<int>(f % static_cast<unsigned long>(period));
+  int pos = phase <= span ? phase : period - phase;  // bounce 0..span..0
   std::string out;
-  int pos = static_cast<int>(f % static_cast<unsigned long>(std::max(1, width)));
   for (int i = 0; i < width; ++i) {
     int d = std::abs(i - pos);
-    if (d <= 1) out += std::string(DARK_FG) + BOLD + "▰";
-    else if (d == 2) out += std::string(CYAN_FG) + "▰";
-    else out += std::string(DARK_DIM_FG) + "▱";
+    if (d == 0) out += std::string(DARK_FG) + BOLD + "\xE2\x97\x8F";   // ● head
+    else if (d == 1) out += std::string(CYAN_FG) + "\xE2\x80\xA2";     // • glow
+    else out += std::string(DARK_DIM_FG) + "\xC2\xB7";                 // · track
   }
   return out + RESET;
 }
@@ -84,6 +92,7 @@ int g_scroll = 0;
 int g_term_scroll = 0;
 int g_term_x = 1000000;
 int g_term_y = -1;
+int g_prev_conv_total = 0;
 
 std::mutex g_status_mutex;
 std::string g_status_line;
@@ -537,6 +546,19 @@ void clamp_scrolls_unlocked() {
   if (g_term_scroll > g_term_max_scroll) g_term_scroll = g_term_max_scroll;
 }
 
+// Keep the conversation viewport anchored while the user is scrolled up and new
+// lines stream in, instead of letting the view slide toward the live bottom.
+// Returns the (possibly bumped) scroll offset for this frame.
+int apply_sticky_scroll(int conv_total) {
+  std::lock_guard<std::mutex> lk(g_input_mutex);
+  if (g_scroll > 0 && conv_total > g_prev_conv_total)
+    g_scroll += (conv_total - g_prev_conv_total);
+  g_prev_conv_total = conv_total;
+  if (g_scroll > conv_total) g_scroll = conv_total;
+  if (g_scroll < 0) g_scroll = 0;
+  return g_scroll;
+}
+
 void adjust_scroll(bool up, int col, int row, bool has_position) {
   std::lock_guard<std::mutex> lk(g_input_mutex);
   bool term_pane = false;
@@ -562,48 +584,73 @@ void process_passive_input(const char* data, std::size_t n) {
   pending.reserve(n);
   for (std::size_t i = 0; i < n;) {
     unsigned char c = static_cast<unsigned char>(data[i]);
-    if (c == 0x1b && i + 2 < n && data[i + 1] == '[') {
-      if (data[i + 2] == '<') {
-        std::size_t j = i + 3;
-        int vals[3] = {0, 0, 0};
-        int vi = 0;
-        int acc = 0;
-        while (j < n && data[j] != 'M' && data[j] != 'm') {
-          char d = data[j];
-          if (d >= '0' && d <= '9') {
-            acc = acc * 10 + (d - '0');
-          } else if (d == ';') {
-            if (vi < 3) vals[vi] = acc;
-            ++vi;
-            acc = 0;
+
+    if (c == 0x03) {  // Ctrl-C: interrupt the current generation
+      interrupter.interrupted.set();
+      ++i;
+      continue;
+    }
+
+    if (c == 0x1b) {
+      // An escape *sequence* (CSI '[' or SS3 'O') is navigation, never an
+      // interrupt. Only a bare Esc interrupts.
+      if (i + 1 < n && (data[i + 1] == '[' || data[i + 1] == 'O')) {
+        // SGR mouse wheel: \x1b[<btn;col;row(M|m)
+        if (data[i + 1] == '[' && i + 2 < n && data[i + 2] == '<') {
+          std::size_t j = i + 3;
+          int vals[3] = {0, 0, 0};
+          int vi = 0, acc = 0;
+          while (j < n && data[j] != 'M' && data[j] != 'm') {
+            char d = data[j];
+            if (d >= '0' && d <= '9') acc = acc * 10 + (d - '0');
+            else if (d == ';') { if (vi < 3) vals[vi] = acc; ++vi; acc = 0; }
+            ++j;
           }
-          ++j;
-        }
-        if (j < n) {
-          if (vi < 3) vals[vi] = acc;
-          int btn = vals[0];
-          if (btn == 64 || btn == 65) {
-            adjust_scroll(btn == 64, vals[1], vals[2], true);
+          if (j < n) {
+            if (vi < 3) vals[vi] = acc;
+            int btn = vals[0];
+            if (btn == 64 || btn == 65) adjust_scroll(btn == 64, vals[1], vals[2], true);
             i = j + 1;
             continue;
           }
         }
-      } else if (data[i + 2] == 'M' && i + 5 < n) {
-        int btn = static_cast<unsigned char>(data[i + 3]) - 32;
-        int col = static_cast<unsigned char>(data[i + 4]) - 32;
-        int row = static_cast<unsigned char>(data[i + 5]) - 32;
-        if (btn == 64 || btn == 65) {
-          adjust_scroll(btn == 64, col, row, true);
+        // X10 mouse wheel: \x1b[Mbcr
+        if (data[i + 1] == '[' && i + 2 < n && data[i + 2] == 'M' && i + 5 < n) {
+          int btn = static_cast<unsigned char>(data[i + 3]) - 32;
+          int col = static_cast<unsigned char>(data[i + 4]) - 32;
+          int row = static_cast<unsigned char>(data[i + 5]) - 32;
+          if (btn == 64 || btn == 65) adjust_scroll(btn == 64, col, row, true);
           i += 6;
           continue;
         }
-      } else if ((data[i + 2] == '5' || data[i + 2] == '6') && i + 3 < n &&
-                 data[i + 3] == '~') {
-        adjust_scroll(data[i + 2] == '5', 0, 0, false);
-        i += 4;
+        // PgUp / PgDn: \x1b[5~ / \x1b[6~
+        if (data[i + 1] == '[' && i + 3 < n &&
+            (data[i + 2] == '5' || data[i + 2] == '6') && data[i + 3] == '~') {
+          adjust_scroll(data[i + 2] == '5', 0, 0, false);
+          i += 4;
+          continue;
+        }
+        // Up / Down arrows (also what terminals emit for the wheel in the alt
+        // screen): \x1b[A / \x1b[B / \x1bOA / \x1bOB
+        if (i + 2 < n && (data[i + 2] == 'A' || data[i + 2] == 'B')) {
+          adjust_scroll(data[i + 2] == 'A', 0, 0, false);
+          i += 3;
+          continue;
+        }
+        // Any other escape sequence: consume it up to its final byte, no interrupt.
+        std::size_t j = i + 2;
+        while (j < n && !(static_cast<unsigned char>(data[j]) >= '@' &&
+                          static_cast<unsigned char>(data[j]) <= '~')) ++j;
+        if (j < n) ++j;
+        i = j;
         continue;
       }
+      // Bare Esc (or Esc followed by a non-sequence byte): interrupt.
+      interrupter.interrupted.set();
+      ++i;
+      continue;
     }
+
     pending.push_back(data[i]);
     ++i;
   }
@@ -722,7 +769,7 @@ std::string green_cell_rich(const std::string& content, int width) {
 std::string pill_rows(int row, int width) {
   if (row == 1) {
     std::string content = "  " + pulse_hot(g_frame) + "\xE2\x97\x86" + std::string(DARK_FG) +
-                          BOLD + " OCLI  " + pulse_meter(g_frame, 10) +
+                          BOLD + " OCLI  " + moving_dot(g_frame, 10) +
                           std::string(DARK_DIM_FG) + "  live agent";
     return green_cell_rich(content, width);
   }
@@ -797,6 +844,7 @@ void compose(std::vector<std::string>& rows, int R, int C) {
     std::vector<std::string> tl = pty_pane_lines(right_w - 2, term_h - 2, term_scroll);
 
     int cl_total = static_cast<int>(cl.size());
+    scroll = apply_sticky_scroll(cl_total);
     int cl_start = cl_total - conv_h - scroll;
     if (cl_start < 0) cl_start = 0;
     int tl_total = static_cast<int>(tl.size());
@@ -830,7 +878,7 @@ void compose(std::vector<std::string>& rows, int R, int C) {
       (void)right_x;
       if (r == term_top) {
         std::string head = "  " + pulse_hot(g_frame) + "\xE2\x96\xB8" + std::string(DARK_FG) +
-                           BOLD + " SHARED TERMINAL  " + pulse_meter(g_frame + 4, 8);
+                           BOLD + " SHARED TERMINAL  " + moving_dot(g_frame + 4, 8);
         if (term_scroll > 0)
           head += std::string(DARK_DIM_FG) + BOLD + "   \xE2\x86\x91" + std::to_string(term_scroll);
         else
@@ -896,6 +944,7 @@ void compose(std::vector<std::string>& rows, int R, int C) {
     std::vector<std::string> cl = conv_display_lines(conv, width);
     std::vector<std::string> tl = pty_pane_lines(width - 1, term_h, term_scroll);
     int cl_total = static_cast<int>(cl.size());
+    scroll = apply_sticky_scroll(cl_total);
     int cl_start = cl_total - conv_h - scroll;
     if (cl_start < 0) cl_start = 0;
     int tl_total = static_cast<int>(tl.size());
@@ -916,7 +965,7 @@ void compose(std::vector<std::string>& rows, int R, int C) {
         emit(r, pad_left + cell);
       } else if (r == term_label) {
         std::string lbl = std::string(pulse_neon(g_frame)) + BOLD + "\xE2\x96\xB8 SHARED TERMINAL  " +
-                          pulse_meter(g_frame + 4, 6) + RESET + GREEN_DIM_FG +
+                          moving_dot(g_frame + 4, 6) + RESET + GREEN_DIM_FG +
                           (term_scroll > 0 ? "  \xE2\x86\x91" + std::to_string(term_scroll) : std::string("  live"));
         emit(r, pad_left + std::string(GREEN_DIM_FG) + fit_ansi(lbl, width) + RESET);
       } else {
@@ -978,7 +1027,10 @@ void render_loop() {
 
     std::string out = "\033[?2026h";
     bool any = false;
-    bool want_mouse = g_mouse_want.load() || g_passive_input.load();
+    // Only enable mouse tracking when the user explicitly opted in (LOREA_MOUSE).
+    // Forcing it on during generation used to hijack the terminal's native
+    // text selection, so you couldn't select output while the model streamed.
+    bool want_mouse = g_mouse_want.load();
     if (want_mouse != g_mouse_on) {
       out += want_mouse ? "\033[?1000h\033[?1006h" : "\033[?1000l\033[?1006l";
       g_mouse_on = want_mouse;
@@ -1005,6 +1057,11 @@ bool live_active() { return g_active.load(); }
 
 void live_set_generating(bool on) {
   g_passive_input.store(on);
+  // During generation the render thread's drain_passive_input() is the sole
+  // stdin reader (it scrolls on PgUp/arrows and sets the interrupt on Esc/^C).
+  // Delegate the interrupt manager so it doesn't also read stdin and turn every
+  // Esc-prefixed key (arrows, PgUp) into an interrupt.
+  interrupter.delegated.store(on);
 }
 
 void live_set_status_line(const std::string& line) {
@@ -1099,7 +1156,10 @@ std::string live_read_line(const std::vector<std::string>* history) {
   std::chrono::steady_clock::time_point cc_at{};
 
   struct MouseScope {
-    MouseScope() { g_mouse_want.store(true); }
+    // Terminal mouse mode hijacks click-drag text selection, so it's OPT-IN
+    // (set LOREA_MOUSE=1 for wheel scrolling). Default off keeps native
+    // selection/copy working; PgUp/PgDn still scroll either way.
+    MouseScope() { g_mouse_want.store(std::getenv("LOREA_MOUSE") != nullptr); }
     ~MouseScope() { g_mouse_want.store(false); }
   } mouse_scope;
 
@@ -1375,6 +1435,21 @@ void live_resume() {
   g_running.store(true);
   g_reader = std::thread(reader_loop);
   g_renderer = std::thread(render_loop);
+}
+
+void live_emergency_restore() {
+  // Best-effort terminal restore that is safe to call from a std::terminate
+  // handler: it only writes escape bytes and restores the stdout fd + termios,
+  // and never joins the render/reader threads (the process is dying anyway).
+  // Without this, a crash while live leaves the terminal in the alt screen with
+  // mouse reporting on, corrupting the user's shell.
+  if (g_real_fd >= 0) {
+    const char* leave = "\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?25h\033[?1049l\033[0m";
+    full_write(g_real_fd, leave, std::strlen(leave));
+  }
+  if (g_saved_stdout >= 0) ::dup2(g_saved_stdout, STDOUT_FILENO);
+  if (g_termios_saved) ::tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_termios);
+  g_mouse_on = false;
 }
 
 void live_end() {

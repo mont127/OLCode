@@ -24,4 +24,10 @@ bool start_dashboard(LOREA& agent, int port = 8730);
 // The full self-contained dashboard page (defined in src/dashboard_html.cpp).
 extern const char* DASHBOARD_HTML;
 
+// Vendored xterm.js 5.3.0 assets (defined in src/vendor_assets.cpp), served at
+// /vendor/* so the embedded terminal works offline.
+extern const char* XTERM_JS;
+extern const char* XTERM_CSS;
+extern const char* XTERM_FIT_JS;
+
 }  // namespace ocli

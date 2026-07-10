@@ -11,6 +11,8 @@
 #include <mutex>
 #include <chrono>
 #include <sstream>
+#include <fstream>
+#include <filesystem>
 #include <cstdint>
 #include <cstring>
 #include <cctype>
@@ -285,6 +287,10 @@ void handle_chat(LOREA& agent, int fd, const std::string& body) {
         send_json(fd, 400, json{{"error", "missing message"}});
         return;
     }
+    bool        req_web_search = req.value("web_search", true);
+    std::string req_effort     = req.value("effort", std::string("basic"));
+    std::string req_workspace  = trim_copy(req.value("workspace", std::string("")));
+    if (!effort_levels().count(req_effort)) req_effort = "basic";
 
     int turn_id = 0;
     json busy_response;
@@ -308,7 +314,7 @@ void handle_chat(LOREA& agent, int fd, const std::string& body) {
         return;
     }
 
-    std::thread([&agent, message, turn_id]() {
+    std::thread([&agent, message, turn_id, req_web_search, req_effort, req_workspace]() {
         std::string response_text;
         std::string log_text;
         std::string error_text;
@@ -334,7 +340,10 @@ void handle_chat(LOREA& agent, int fd, const std::string& body) {
                     "and verification results. Never output <voice_note> blocks.";
                 json spec = json{{"name", "dashboard"},
                                  {"task", message},
-                                 {"context", dashboard_context}};
+                                 {"context", dashboard_context},
+                                 {"web_search", req_web_search},
+                                 {"effort", req_effort},
+                                 {"workspace", req_workspace}};
                 json result = agent.spawn_agent_chat(spec, shared, 240, 8, ta);
                 if (result.is_object()) {
                     std::string st = result.value("status", std::string("ok"));
@@ -358,6 +367,19 @@ void handle_chat(LOREA& agent, int fd, const std::string& body) {
             if (response_text.empty()) response_text = "The agent did not produce a response.";
             agent.messages.push_back(json{{"role", "assistant"}, {"content", response_text}});
             display_messages = dashboard_messages_from_agent(agent);
+            // Attach the agent's work trace to the last assistant message (display-only,
+            // not fed back into the model context) so LOREA Code can surface its activity.
+            if (!log_text.empty() && display_messages.is_array()) {
+                std::string act = log_text;
+                if (act.size() > 40000) act = act.substr(act.size() - 40000);
+                for (auto it = display_messages.end(); it != display_messages.begin(); ) {
+                    --it;
+                    if (it->is_object() && it->value("role", std::string("")) == "assistant") {
+                        (*it)["activity"] = act;
+                        break;
+                    }
+                }
+            }
         } catch (const std::exception& e) {
             error_text = std::string("Error: ") + e.what();
         } catch (...) {
@@ -386,6 +408,213 @@ void handle_exec(LOREA& agent, int fd, const std::string& body) {
     }
     (void)agent;
     send_json(fd, 200, json{{"output", std::string()}});
+}
+
+bool base64_decode(const std::string& in, std::string& out) {
+    static const std::string chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int T[256];
+    for (int i = 0; i < 256; ++i) T[i] = -1;
+    for (int i = 0; i < 64; ++i) T[static_cast<unsigned char>(chars[i])] = i;
+    out.clear();
+    int val = 0, bits = -8;
+    for (unsigned char c : in) {
+        if (c == '=') break;
+        if (std::isspace(c)) continue;
+        if (T[c] == -1) return false;
+        val = (val << 6) + T[c];
+        bits += 6;
+        if (bits >= 0) {
+            out.push_back(static_cast<char>((val >> bits) & 0xFF));
+            bits -= 8;
+        }
+    }
+    return true;
+}
+
+// POST /api/upload  {"filename":"...", "content_base64":"..."}  (data: URL also accepted)
+// Saves into <cwd>/uploads/<basename> and returns {"path","size"}.
+void handle_upload(int fd, const std::string& body) {
+    json req;
+    if (!parse_json_body(body, req)) {
+        send_json(fd, 400, json{{"error", "invalid json body"}});
+        return;
+    }
+    std::string filename = trim_copy(req.value("filename", std::string("")));
+    std::string b64 = req.value("content_base64", std::string(""));
+    std::size_t comma = b64.find(',');
+    if (b64.rfind("data:", 0) == 0 && comma != std::string::npos) b64 = b64.substr(comma + 1);
+    if (filename.empty() || b64.empty()) {
+        send_json(fd, 400, json{{"error", "missing filename or content_base64"}});
+        return;
+    }
+    filename = std::filesystem::path(filename).filename().string();  // strip path traversal
+    if (filename.empty() || filename == "." || filename == "..") {
+        send_json(fd, 400, json{{"error", "invalid filename"}});
+        return;
+    }
+    std::string bytes;
+    if (!base64_decode(b64, bytes)) {
+        send_json(fd, 400, json{{"error", "invalid base64"}});
+        return;
+    }
+
+    namespace fs = std::filesystem;
+    std::string saved;
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);   // pin cwd against a running turn
+        std::error_code ec;
+        fs::path dir = fs::current_path(ec) / "uploads";
+        fs::create_directories(dir, ec);
+        if (ec) {
+            send_json(fd, 500, json{{"error", "cannot create uploads dir"}});
+            return;
+        }
+        std::ofstream ofs(dir / filename, std::ios::binary | std::ios::trunc);
+        if (!ofs) {
+            send_json(fd, 500, json{{"error", "cannot write file"}});
+            return;
+        }
+        ofs.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        saved = (dir / filename).string();
+    }
+    send_json(fd, 200, json{{"path", saved}, {"size", bytes.size()}});
+}
+
+// GET /api/workspace -> {"workspace": <process cwd>}
+void handle_get_workspace(int fd) {
+    std::string cwd;
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+        std::error_code ec;
+        cwd = std::filesystem::current_path(ec).string();
+        if (ec) cwd = ".";
+    }
+    send_json(fd, 200, json{{"workspace", cwd}});
+}
+
+// POST /api/workspace  {"path":"..."} -> chdir the dashboard process + sync the shared shell.
+// Subsequently spawned agent-worker turns inherit this cwd, so they operate in the workspace.
+void handle_set_workspace(int fd, const std::string& body) {
+    json req;
+    if (!parse_json_body(body, req)) {
+        send_json(fd, 400, json{{"error", "invalid json body"}});
+        return;
+    }
+    std::string path = trim_copy(req.value("path", std::string("")));
+    if (path.empty()) {
+        send_json(fd, 400, json{{"error", "missing path"}});
+        return;
+    }
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path target = fs::canonical(path, ec);
+    if (ec || !fs::is_directory(target, ec)) {
+        send_json(fd, 400, json{{"error", "not a directory"}});
+        return;
+    }
+    std::string resolved;
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+        if (::chdir(target.c_str()) != 0) {
+            send_json(fd, 500, json{{"error", std::string("chdir failed: ") + std::strerror(errno)}});
+            return;
+        }
+        terminal_session().write_input(std::string("cd ") + shlex_quote(target.string()) + "\n");
+        resolved = target.string();
+    }
+    send_json(fd, 200, json{{"workspace", resolved}});
+}
+
+// POST /api/new_chat -> reset the conversation to just the system prompt.
+void handle_new_chat(LOREA& agent, int fd) {
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+        if (!agent.messages.empty()) {
+            json system0 = agent.messages.front();   // preserve the system prompt
+            agent.messages.clear();
+            agent.messages.push_back(system0);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> dlk(g_dashboard.m);
+        g_dashboard.messages = json::array();
+        g_dashboard.current.clear();
+        g_dashboard.last_error.clear();
+    }
+    send_json(fd, 200, json{{"ok", true}});
+}
+
+// POST /api/load_chat {"messages":[{role,content}...]} -> replace the conversation
+// (used to restore a past chat from the client-side history).
+void handle_load_chat(LOREA& agent, int fd, const std::string& body) {
+    json req;
+    if (!parse_json_body(body, req)) { send_json(fd, 400, json{{"error", "invalid json body"}}); return; }
+    json incoming = req.value("messages", json::array());
+    if (!incoming.is_array()) { send_json(fd, 400, json{{"error", "messages must be an array"}}); return; }
+    json restored = json::array();
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+        json system0 = agent.messages.empty() ? json::object() : agent.messages.front();
+        agent.messages.clear();
+        if (system0.is_object() && !system0.empty()) agent.messages.push_back(system0);
+        for (const auto& m : incoming) {
+            if (!m.is_object()) continue;
+            std::string role = m.value("role", std::string(""));
+            std::string content = m.value("content", std::string(""));
+            if ((role == "user" || role == "assistant") && !content.empty()) {
+                agent.messages.push_back(json{{"role", role}, {"content", content}});
+                restored.push_back(json{{"role", role}, {"content", content}});
+            }
+        }
+    }
+    {
+        std::lock_guard<std::mutex> dlk(g_dashboard.m);
+        g_dashboard.messages = restored;
+    }
+    send_json(fd, 200, json{{"ok", true}, {"count", restored.size()}});
+}
+
+// GET /api/connect -> current MPC connection status.
+void handle_get_connect(LOREA& agent, int fd) {
+    bool connected = agent.mpc_url.has_value() && !agent.mpc_url->empty();
+    send_json(fd, 200, json{
+        {"connected", connected},
+        {"url", connected ? *agent.mpc_url : std::string("")},
+        {"model", agent.model_name},
+        {"streaming", connected ? agent.mpc_supports("streaming") : false}});
+}
+
+// POST /api/connect {"url","token"} -> connect to an MPC server and persist it.
+void handle_connect(LOREA& agent, int fd, const std::string& body) {
+    json req;
+    if (!parse_json_body(body, req)) { send_json(fd, 400, json{{"error", "invalid json body"}}); return; }
+    std::string url = trim_copy(req.value("url", std::string("")));
+    std::string token = trim_copy(req.value("token", std::string("")));
+    if (url.empty()) { send_json(fd, 400, json{{"error", "missing url"}}); return; }
+    auto nurl = agent.normalize_mpc_url(url);
+    if (!nurl) { send_json(fd, 400, json{{"error", "invalid url"}}); return; }
+    bool ok;
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+        ok = agent.activate_mpc(*nurl, token);
+        if (ok) agent.save_mpc_connection();
+    }
+    if (!ok) { send_json(fd, 502, json{{"error", "could not reach MPC server at that URL/token"}}); return; }
+    send_json(fd, 200, json{
+        {"connected", true},
+        {"url", agent.mpc_url.value_or("")},
+        {"model", agent.model_name},
+        {"streaming", agent.mpc_supports("streaming")}});
+}
+
+// POST /api/disconnect -> drop the MPC connection and clear the saved file.
+void handle_disconnect(LOREA& agent, int fd) {
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+        agent.disconnect_mpc();
+    }
+    send_json(fd, 200, json{{"connected", false}, {"model", agent.model_name}});
 }
 
 bool term_send_all(int fd, const char* data, std::size_t len) {
@@ -513,6 +742,21 @@ void route(LOREA& agent, int fd, const std::string& method,
                       DASHBOARD_HTML != nullptr ? std::string(DASHBOARD_HTML) : std::string());
         return;
     }
+    if (method == "GET" && path == "/vendor/xterm.js") {
+        send_response(fd, 200, "application/javascript; charset=utf-8",
+                      XTERM_JS != nullptr ? std::string(XTERM_JS) : std::string());
+        return;
+    }
+    if (method == "GET" && path == "/vendor/xterm.css") {
+        send_response(fd, 200, "text/css; charset=utf-8",
+                      XTERM_CSS != nullptr ? std::string(XTERM_CSS) : std::string());
+        return;
+    }
+    if (method == "GET" && path == "/vendor/xterm-addon-fit.js") {
+        send_response(fd, 200, "application/javascript; charset=utf-8",
+                      XTERM_FIT_JS != nullptr ? std::string(XTERM_FIT_JS) : std::string());
+        return;
+    }
     if (method == "GET" && path == "/api/info") {
         handle_info(agent, fd, port);
         return;
@@ -543,6 +787,38 @@ void route(LOREA& agent, int fd, const std::string& method,
     }
     if (method == "POST" && path == "/api/term/resize") {
         handle_term_resize(fd, body);
+        return;
+    }
+    if (method == "POST" && path == "/api/upload") {
+        handle_upload(fd, body);
+        return;
+    }
+    if (method == "POST" && path == "/api/workspace") {
+        handle_set_workspace(fd, body);
+        return;
+    }
+    if (method == "GET" && path == "/api/workspace") {
+        handle_get_workspace(fd);
+        return;
+    }
+    if (method == "POST" && path == "/api/new_chat") {
+        handle_new_chat(agent, fd);
+        return;
+    }
+    if (method == "POST" && path == "/api/load_chat") {
+        handle_load_chat(agent, fd, body);
+        return;
+    }
+    if (method == "GET" && path == "/api/connect") {
+        handle_get_connect(agent, fd);
+        return;
+    }
+    if (method == "POST" && path == "/api/connect") {
+        handle_connect(agent, fd, body);
+        return;
+    }
+    if (method == "POST" && path == "/api/disconnect") {
+        handle_disconnect(agent, fd);
         return;
     }
     if (method == "OPTIONS") {
