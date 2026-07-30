@@ -1,3 +1,5 @@
+// Watches the keyboard in raw mode so a running turn can be interrupted.
+
 #include "interrupt.hpp"
 
 #include <unistd.h>
@@ -33,8 +35,7 @@ void InterruptionManager::start_listening() {
     interrupted.clear();
 
     if (delegated.load()) {
-        // The live view reads stdin and will set `interrupted` for us. Don't
-        // touch the terminal or start a competing reader thread.
+
         active_ = true;
         return;
     }

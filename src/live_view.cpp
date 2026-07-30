@@ -1,3 +1,5 @@
+// Animated live status view rendered during a turn (spinners, colour pulses, progress).
+
 #include "live_view.hpp"
 #include "pty_session.hpp"
 #include "interrupt.hpp"
@@ -16,6 +18,7 @@
 #include <deque>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -28,6 +31,10 @@ namespace ocli {
 namespace {
 
 const char* GREEN_BG = "\033[48;2;74;222;128m";
+// Deep-green full-block drop shadow for the solid green boxes: a full column
+// down the right edge plus a full row underneath, offset one cell each way.
+const char* SHADOW_FG = "\033[38;2;20;83;45m";
+const char* SHADOW_EDGE = "\033[38;2;20;83;45m\xE2\x96\x88\033[0m";
 const char* DARK_FG = "\033[38;2;4;20;12m";
 const char* DARK_DIM_FG = "\033[38;2;22;74;46m";
 const char* GREEN_DIM_FG = "\033[38;2;86;170;120m";
@@ -59,26 +66,15 @@ std::string pulse_hot(unsigned long f) {
   return lerp_color(6, 34, 22, 210, 255, 240, t, 30);
 }
 
-// A single dot gliding back and forth on a faint track, with a soft glow beside
-// it. Replaces the old block-meter bars in the pane headers.
-std::string moving_dot(unsigned long f, int width) {
-  if (width < 1) width = 1;
-  int span = width - 1;
-  if (span < 1) span = 1;
-  int period = 2 * span;
-  int phase = static_cast<int>(f % static_cast<unsigned long>(period));
-  int pos = phase <= span ? phase : period - phase;  // bounce 0..span..0
-  std::string out;
-  for (int i = 0; i < width; ++i) {
-    int d = std::abs(i - pos);
-    if (d == 0) out += std::string(DARK_FG) + BOLD + "\xE2\x97\x8F";   // ● head
-    else if (d == 1) out += std::string(CYAN_FG) + "\xE2\x80\xA2";     // • glow
-    else out += std::string(DARK_DIM_FG) + "\xC2\xB7";                 // · track
-  }
-  return out + RESET;
-}
-
 bool blink_on(unsigned long f) { return (f % 18) < 11; }
+
+// Breathing ink for text sitting on the green fill: dark at rest, flashing
+// toward white at the peak of each cycle.
+std::string pulse_ink(unsigned long f) {
+  int phase = static_cast<int>(f % 40);
+  int t = phase < 20 ? phase : 40 - phase;
+  return lerp_color(4, 20, 12, 245, 255, 250, t, 20);
+}
 
 std::mutex g_conv_mutex;
 std::string g_conv;
@@ -546,9 +542,6 @@ void clamp_scrolls_unlocked() {
   if (g_term_scroll > g_term_max_scroll) g_term_scroll = g_term_max_scroll;
 }
 
-// Keep the conversation viewport anchored while the user is scrolled up and new
-// lines stream in, instead of letting the view slide toward the live bottom.
-// Returns the (possibly bumped) scroll offset for this frame.
 int apply_sticky_scroll(int conv_total) {
   std::lock_guard<std::mutex> lk(g_input_mutex);
   if (g_scroll > 0 && conv_total > g_prev_conv_total)
@@ -585,17 +578,16 @@ void process_passive_input(const char* data, std::size_t n) {
   for (std::size_t i = 0; i < n;) {
     unsigned char c = static_cast<unsigned char>(data[i]);
 
-    if (c == 0x03) {  // Ctrl-C: interrupt the current generation
+    if (c == 0x03) {
       interrupter.interrupted.set();
       ++i;
       continue;
     }
 
     if (c == 0x1b) {
-      // An escape *sequence* (CSI '[' or SS3 'O') is navigation, never an
-      // interrupt. Only a bare Esc interrupts.
+
       if (i + 1 < n && (data[i + 1] == '[' || data[i + 1] == 'O')) {
-        // SGR mouse wheel: \x1b[<btn;col;row(M|m)
+
         if (data[i + 1] == '[' && i + 2 < n && data[i + 2] == '<') {
           std::size_t j = i + 3;
           int vals[3] = {0, 0, 0};
@@ -614,7 +606,7 @@ void process_passive_input(const char* data, std::size_t n) {
             continue;
           }
         }
-        // X10 mouse wheel: \x1b[Mbcr
+
         if (data[i + 1] == '[' && i + 2 < n && data[i + 2] == 'M' && i + 5 < n) {
           int btn = static_cast<unsigned char>(data[i + 3]) - 32;
           int col = static_cast<unsigned char>(data[i + 4]) - 32;
@@ -623,21 +615,20 @@ void process_passive_input(const char* data, std::size_t n) {
           i += 6;
           continue;
         }
-        // PgUp / PgDn: \x1b[5~ / \x1b[6~
+
         if (data[i + 1] == '[' && i + 3 < n &&
             (data[i + 2] == '5' || data[i + 2] == '6') && data[i + 3] == '~') {
           adjust_scroll(data[i + 2] == '5', 0, 0, false);
           i += 4;
           continue;
         }
-        // Up / Down arrows (also what terminals emit for the wheel in the alt
-        // screen): \x1b[A / \x1b[B / \x1bOA / \x1bOB
+
         if (i + 2 < n && (data[i + 2] == 'A' || data[i + 2] == 'B')) {
           adjust_scroll(data[i + 2] == 'A', 0, 0, false);
           i += 3;
           continue;
         }
-        // Any other escape sequence: consume it up to its final byte, no interrupt.
+
         std::size_t j = i + 2;
         while (j < n && !(static_cast<unsigned char>(data[j]) >= '@' &&
                           static_cast<unsigned char>(data[j]) <= '~')) ++j;
@@ -645,7 +636,7 @@ void process_passive_input(const char* data, std::size_t n) {
         i = j;
         continue;
       }
-      // Bare Esc (or Esc followed by a non-sequence byte): interrupt.
+
       interrupter.interrupted.set();
       ++i;
       continue;
@@ -697,7 +688,17 @@ std::vector<std::string> pty_pane_lines(int cols, int height, int term_scroll) {
     if (!chunk.empty()) g_emu.feed(chunk);
   }
   g_term_max_scroll = g_emu.max_scroll();
-  return g_emu.view(term_scroll);
+  std::vector<std::string> view = g_emu.view(term_scroll);
+  // run_command() brackets each command with __OCLI_B_n__/__OCLI_E_n__ sentinels so it
+  // can slice that command's output back out of the shared PTY stream. They are real
+  // bytes in the stream, so both the echoed command line and the printf land in the
+  // emulated screen. Blank those rows for display (blank, not erase, so the pane's
+  // row geometry still matches the emulator's).
+  for (std::string& ln : view) {
+    if (ln.find("__OCLI_B_") != std::string::npos || ln.find("__OCLI_E_") != std::string::npos)
+      ln.clear();
+  }
+  return view;
 }
 
 void reader_loop() {
@@ -720,6 +721,27 @@ void reader_loop() {
 std::string green_cell(const std::string& text, int width, bool dim) {
   return std::string(GREEN_BG) + (dim ? DARK_DIM_FG : DARK_FG) + fit_plain(text, width) +
          RESET;
+}
+
+std::string shadow_under(int width) {
+  std::string s = SHADOW_FG;
+  for (int i = 0; i < width; ++i) s += "\xE2\x96\x88";
+  s += RESET;
+  return s;
+}
+
+// Terminal-pane activity: fingerprint the visible pane each frame and report
+// true for a short afterglow (~2s) whenever its content just changed.
+std::size_t g_term_fp = 0;
+unsigned long g_term_change_frame = 0;
+bool term_glow(const std::vector<std::string>& tl) {
+  std::size_t fp = 1469598103u ^ (tl.size() * 1315423911u);
+  for (const std::string& s : tl) fp = fp * 131 + std::hash<std::string>{}(s);
+  if (fp != g_term_fp) {
+    g_term_fp = fp;
+    g_term_change_frame = g_frame;
+  }
+  return g_frame - g_term_change_frame < 45;
 }
 
 std::string clip_visible(const std::string& s, int width) {
@@ -768,8 +790,10 @@ std::string green_cell_rich(const std::string& content, int width) {
 
 std::string pill_rows(int row, int width) {
   if (row == 1) {
-    std::string content = "  " + pulse_hot(g_frame) + "\xE2\x97\x86" + std::string(DARK_FG) +
-                          BOLD + " OCLI  " + moving_dot(g_frame, 10) +
+    // Keep a slow breathe on the mark so the header still feels live, but drop the
+    // travelling dot train — half-speed pulse only.
+    std::string content = "  " + pulse_hot(g_frame / 2) + "\xE2\x97\x86" + std::string(DARK_FG) +
+                          BOLD + " OCLI" +
                           std::string(DARK_DIM_FG) + "  live agent";
     return green_cell_rich(content, width);
   }
@@ -830,7 +854,8 @@ void compose(std::vector<std::string>& rows, int R, int C) {
     int main_bottom = R - 1;
     int term_top = 1;
     int term_h = main_bottom;
-    int conv_top = 1 + pill_h;
+    // One reserved row under the pill carries its drop shadow.
+    int conv_top = 1 + pill_h + 1;
     int input_h = 3;
     int input_top = R - 1 - input_h + 1;
     int conv_bottom = input_top - 2;
@@ -857,6 +882,8 @@ void compose(std::vector<std::string>& rows, int R, int C) {
       std::string left_cell;
       if (r <= pill_h) {
         left_cell = pill_rows(r - 1, left_w);
+      } else if (r == pill_h + 1) {
+        left_cell = " " + shadow_under(left_w - 1);
       } else if (r == conv_top && scroll > 0) {
         std::string hint = std::string(CYAN_FG) + BOLD + "\xE2\x8C\x83 " + std::to_string(scroll) +
                            " up" + std::string(NEON_FG) + "  \xC2\xB7 scroll down for live";
@@ -877,10 +904,13 @@ void compose(std::vector<std::string>& rows, int R, int C) {
       int right_x = left_x + left_w + gap;
       (void)right_x;
       if (r == term_top) {
-        std::string head = "  " + pulse_hot(g_frame) + "\xE2\x96\xB8" + std::string(DARK_FG) +
-                           BOLD + " SHARED TERMINAL  " + moving_dot(g_frame + 4, 8);
+        bool glow = term_glow(tl);
+        std::string head = "  " + pulse_hot(g_frame / 2) + "\xE2\x96\xB8" + std::string(DARK_FG) +
+                           BOLD + " SHARED TERMINAL";
         if (term_scroll > 0)
           head += std::string(DARK_DIM_FG) + BOLD + "   \xE2\x86\x91" + std::to_string(term_scroll);
+        else if (glow)
+          head += "   " + pulse_ink(g_frame) + "\xE2\x97\x8F" + std::string(DARK_DIM_FG) + " live";
         else
           head += std::string(DARK_DIM_FG) + "   live";
         right_cell = green_cell_rich(head, right_w);
@@ -895,13 +925,26 @@ void compose(std::vector<std::string>& rows, int R, int C) {
         right_cell = green_cell("", right_w, false);
       }
 
-      emit(r, pad_left + left_cell + gap_str + right_cell);
+      // Pill body rows cast their right-edge shadow into the first gap column;
+      // the reserved row under the pill completes the offset with a final block.
+      std::string edge = gap_str;
+      if (r >= 2 && r <= pill_h)
+        edge = std::string(SHADOW_EDGE) + std::string(static_cast<std::size_t>(gap - 1), ' ');
+      else if (r == pill_h + 1)
+        edge = shadow_under(1) + std::string(static_cast<std::size_t>(gap - 1), ' ');
+      std::string pane_sh = (r >= 2) ? std::string(SHADOW_EDGE) : std::string();
+      emit(r, pad_left + left_cell + edge + right_cell + pane_sh);
     }
 
     for (int r = input_top; r <= input_top + input_h - 1; ++r) {
       std::string body;
-      if (r == input_top || r == input_top + input_h - 1) {
-        body = pad_left + green_cell("", left_w, false);
+      if (r == input_top) {
+        // Top row of the input box; to its right, the terminal pane's bottom
+        // shadow lands on this row.
+        body = pad_left + green_cell("", left_w, false) + gap_str + " " +
+               shadow_under(right_w);
+      } else if (r == input_top + input_h - 1) {
+        body = pad_left + green_cell("", left_w, false) + SHADOW_EDGE;
       } else {
         std::string caret = blink_on(g_frame) ? "\xE2\x96\x88" : " ";
         if (tfocus) {
@@ -917,18 +960,23 @@ void compose(std::vector<std::string>& rows, int R, int C) {
           body = pad_left + green_cell_rich(std::string("  ") + PINK_FG + BOLD + "\xE2\x9D\xAF " +
                      std::string(DARK_FG) + shown + std::string(DARK_FG) + caret, left_w);
         }
+        body += SHADOW_EDGE;
       }
       emit(r, body);
     }
-    emit(R, "");
+    emit(R, pad_left + " " + shadow_under(left_w));
     (void)icur;
   } else {
     int width = C - left_x - 1;
     if (width < 10) width = C - 1;
+    // Shadows need one spare column on the right; the tiny-window fallback
+    // width has none, so they are skipped there.
+    bool sh_ok = (left_x - 1) + width + 1 <= C;
     int pill_bottom = pill_h;
     int input_h = 3;
     int input_top = R - input_h;
-    int body_top = pill_bottom + 1;
+    // One reserved row under the pill carries its drop shadow.
+    int body_top = pill_bottom + 2;
     int body_bottom = input_top - 1;
     int body_h = body_bottom - body_top + 1;
     if (body_h < 2) body_h = 2;
@@ -952,7 +1000,11 @@ void compose(std::vector<std::string>& rows, int R, int C) {
 
     std::string pad_left(static_cast<std::size_t>(left_x - 1), ' ');
 
-    for (int r = 1; r <= pill_h; ++r) emit(r, pad_left + pill_rows(r - 1, width));
+    for (int r = 1; r <= pill_h; ++r)
+      emit(r, pad_left + pill_rows(r - 1, width) +
+                  ((sh_ok && r >= 2) ? std::string(SHADOW_EDGE) : std::string()));
+    if (sh_ok && pill_h + 1 < input_top)
+      emit(pill_h + 1, pad_left + " " + shadow_under(width));
 
     for (int r = body_top; r <= body_bottom; ++r) {
       if (r == body_bottom && !status.empty()) {
@@ -964,15 +1016,22 @@ void compose(std::vector<std::string>& rows, int R, int C) {
                                : std::string(static_cast<std::size_t>(width), ' ');
         emit(r, pad_left + cell);
       } else if (r == term_label) {
-        std::string lbl = std::string(pulse_neon(g_frame)) + BOLD + "\xE2\x96\xB8 SHARED TERMINAL  " +
-                          moving_dot(g_frame + 4, 6) + RESET + GREEN_DIM_FG +
-                          (term_scroll > 0 ? "  \xE2\x86\x91" + std::to_string(term_scroll) : std::string("  live"));
+        bool glow = term_glow(tl);
+        std::string tail =
+            term_scroll > 0
+                ? "  \xE2\x86\x91" + std::to_string(term_scroll)
+                : (glow ? "  " + std::string(pulse_neon(g_frame)) + "\xE2\x97\x8F" +
+                              std::string(GREEN_DIM_FG) + " live"
+                        : std::string("  live"));
+        std::string lbl = std::string(pulse_neon(g_frame / 2)) + BOLD + "\xE2\x96\xB8 SHARED TERMINAL" +
+                          RESET + GREEN_DIM_FG + tail;
         emit(r, pad_left + std::string(GREEN_DIM_FG) + fit_ansi(lbl, width) + RESET);
       } else {
         int idx = tl_start + (r - term_top);
         std::string content =
             (idx >= 0 && idx < tl_total) ? tl[static_cast<std::size_t>(idx)] : std::string();
-        emit(r, pad_left + green_cell(" " + content, width, false));
+        emit(r, pad_left + green_cell(" " + content, width, false) +
+                    ((sh_ok && r > term_top) ? std::string(SHADOW_EDGE) : std::string()));
       }
     }
 
@@ -994,6 +1053,7 @@ void compose(std::vector<std::string>& rows, int R, int C) {
                      std::string(DARK_FG) + clip_visible(strip_ansi(input), width - 5) +
                      std::string(DARK_FG) + caret, width);
       }
+      if (sh_ok && r > input_top) body += SHADOW_EDGE;
       emit(r, body);
     }
   }
@@ -1027,9 +1087,7 @@ void render_loop() {
 
     std::string out = "\033[?2026h";
     bool any = false;
-    // Only enable mouse tracking when the user explicitly opted in (LOREA_MOUSE).
-    // Forcing it on during generation used to hijack the terminal's native
-    // text selection, so you couldn't select output while the model streamed.
+
     bool want_mouse = g_mouse_want.load();
     if (want_mouse != g_mouse_on) {
       out += want_mouse ? "\033[?1000h\033[?1006h" : "\033[?1000l\033[?1006l";
@@ -1051,16 +1109,13 @@ void render_loop() {
   }
 }
 
-}  // namespace
+}
 
 bool live_active() { return g_active.load(); }
 
 void live_set_generating(bool on) {
   g_passive_input.store(on);
-  // During generation the render thread's drain_passive_input() is the sole
-  // stdin reader (it scrolls on PgUp/arrows and sets the interrupt on Esc/^C).
-  // Delegate the interrupt manager so it doesn't also read stdin and turn every
-  // Esc-prefixed key (arrows, PgUp) into an interrupt.
+
   interrupter.delegated.store(on);
 }
 
@@ -1156,9 +1211,7 @@ std::string live_read_line(const std::vector<std::string>* history) {
   std::chrono::steady_clock::time_point cc_at{};
 
   struct MouseScope {
-    // Terminal mouse mode hijacks click-drag text selection, so it's OPT-IN
-    // (set LOREA_MOUSE=1 for wheel scrolling). Default off keeps native
-    // selection/copy working; PgUp/PgDn still scroll either way.
+
     MouseScope() { g_mouse_want.store(std::getenv("LOREA_MOUSE") != nullptr); }
     ~MouseScope() { g_mouse_want.store(false); }
   } mouse_scope;
@@ -1438,11 +1491,7 @@ void live_resume() {
 }
 
 void live_emergency_restore() {
-  // Best-effort terminal restore that is safe to call from a std::terminate
-  // handler: it only writes escape bytes and restores the stdout fd + termios,
-  // and never joins the render/reader threads (the process is dying anyway).
-  // Without this, a crash while live leaves the terminal in the alt screen with
-  // mouse reporting on, corrupting the user's shell.
+
   if (g_real_fd >= 0) {
     const char* leave = "\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?25h\033[?1049l\033[0m";
     full_write(g_real_fd, leave, std::strlen(leave));
@@ -1513,4 +1562,4 @@ void live_end() {
   g_status_fn = nullptr;
 }
 
-}  // namespace ocli
+}

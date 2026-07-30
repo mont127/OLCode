@@ -1,3 +1,5 @@
+// Shared utilities plus the safety pattern tables and command gates.
+
 #pragma once
 
 #include <string>

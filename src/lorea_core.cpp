@@ -1,3 +1,5 @@
+// LOREA construction, backend/model selection and ollama model discovery.
+
 #include "lorea.hpp"
 #include "ocli_prompt.hpp"
 
@@ -252,7 +254,7 @@ void LOREA::cleanup() {
 
 std::optional<int> LOREA::menu_choice(const std::string& title,
                                       const std::vector<std::string>& options) {
-    return interactive_menu(title, options, Colors::VIOLET);
+    return interactive_menu(title, options, MUTED);
 }
 
 std::optional<std::string> LOREA::prompt_value(const std::string& label,
@@ -517,7 +519,7 @@ void LOREA::backend_menu() {
         if (!has_token) {
             auto k = api_key(backend_, true);
             if (!k || k->empty()) {
-                log_info("No credential set for " + backend_ + "; backend not changed.");
+                log_warn("No credential set for " + backend_ + "; backend not changed.");
                 return;
             }
         }
@@ -551,6 +553,40 @@ std::vector<std::string> LOREA::list_ollama_models() {
     }
 }
 
+bool ollama_model_usable(const std::string& model) {
+    if (model.empty()) return false;
+    try {
+
+        ProcResult r = run_subprocess({"ollama", "show", model}, "", 15.0, true);
+        return r.started && !r.timed_out && r.exit_code == 0;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::vector<std::string> LOREA::list_usable_ollama_models() {
+    std::vector<std::string> out;
+    for (const auto& m : list_ollama_models()) {
+        if (ollama_model_usable(m)) out.push_back(m);
+    }
+    return out;
+}
+
+std::string first_usable_ollama_model() {
+    try {
+        ProcResult result = run_subprocess({"ollama", "list"}, "", 5.0, false);
+        if (!result.started || result.timed_out || result.exit_code != 0) return {};
+        std::vector<std::string> lines = splitlines(result.out);
+        for (std::size_t i = 1; i < lines.size(); ++i) {
+            std::vector<std::string> parts = split_ws(lines[i]);
+            if (parts.empty()) continue;
+            if (ollama_model_usable(parts[0])) return parts[0];
+        }
+    } catch (...) {
+    }
+    return {};
+}
+
 void LOREA::model_menu() {
     std::vector<std::string> suggestions;
     {
@@ -571,19 +607,34 @@ void LOREA::model_menu() {
         std::vector<std::string> local_models;
         std::vector<std::string> search_dirs = {
             "llama.cpp/models",
-            expanduser("~/llama.cpp/models")
+            expanduser("~/llama.cpp/models"),
+            expanduser("~/models"),
+            "/Volumes/ASAFE/gguf-work",
         };
         for (const auto& dir : search_dirs) {
             std::error_code ec;
             if (fs::exists(dir, ec) && fs::is_directory(dir, ec)) {
                 for (const auto& entry : fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
-                    if (entry.is_regular_file(ec) && entry.path().extension() == ".gguf") {
-                        local_models.push_back(entry.path().string());
-                    }
+                    if (!entry.is_regular_file(ec) || entry.path().extension() != ".gguf")
+                        continue;
+                    // llama.cpp ships dozens of ggml-vocab-*.gguf tokenizer fixtures in its
+                    // models dir. They are not loadable models and they bury the real ones.
+                    if (entry.path().filename().string().rfind("ggml-vocab-", 0) == 0)
+                        continue;
+                    local_models.push_back(entry.path().string());
                 }
             }
         }
         std::vector<std::string> combined;
+        // The configured default goes first so the model you almost always want is entry 1
+        // rather than buried behind whatever the directory scan happened to turn up.
+        {
+            std::error_code ec;
+            auto it = BACKEND_DEFAULT_MODELS.find("llama-cpp");
+            if (it != BACKEND_DEFAULT_MODELS.end() && !it->second.empty() &&
+                fs::is_regular_file(it->second, ec))
+                combined.push_back(it->second);
+        }
         for (const auto& lm : local_models) combined.push_back(lm);
         for (const auto& s : suggestions) combined.push_back(s);
         std::vector<std::string> uniq;
@@ -771,7 +822,6 @@ void LOREA::theme_command(const std::string& name) {
 }
 
 void LOREA::display_metrics(const json& response) {
-    std::string sep = std::string(" ") + Colors::DIM + Colors::GRAY + "·" + Colors::RESET + " ";
     const json* mpc = jget(response, "mpc");
     if (mpc && json_truthy(*mpc)) {
         const json* dur = jget(response, "duration");
@@ -787,11 +837,8 @@ void LOREA::display_metrics(const json& response) {
         if (dur && dur->is_number()) {
             char b[64];
             std::snprintf(b, sizeof(b), "%.2f", dur->get<double>());
-            std::cout << "  " << status_label("STATS", Colors::GRAY) << " MPC " << detail << sep
-                      << b << "s" << Colors::RESET << "\n";
-        } else {
-            std::cout << "  " << status_label("STATS", Colors::GRAY) << " MPC " << detail
-                      << " request completed." << Colors::RESET << "\n";
+            std::cout << "  " << Colors::DIM << Colors::GRAY << "mpc " << detail << " · " << b
+                      << "s" << Colors::RESET << "\n";
         }
         return;
     }
@@ -808,18 +855,14 @@ void LOREA::display_metrics(const json& response) {
         if (eval_duration > 0 && e_tokens) {
             char b[64];
             std::snprintf(b, sizeof(b), "%.1f", (double)e_tokens / eval_duration);
-            tps = sep + b + " tok/s";
+            tps = std::string(" · ") + b + " tok/s";
         }
         if (duration > 0) {
             char b[64];
             std::snprintf(b, sizeof(b), "%.2f", duration);
-            std::cout << "  " << status_label("STATS", Colors::GRAY) << " " << b << "s" << sep
-                      << "↑ " << p_tokens << sep << "↓ " << e_tokens << tps << Colors::RESET
-                      << "\n";
+            std::cout << "  " << Colors::DIM << Colors::GRAY << b << "s · ↑ " << p_tokens
+                      << " · ↓ " << e_tokens << tps << Colors::RESET << "\n";
         }
-    } else {
-        std::cout << "  " << status_label("STATS", Colors::GRAY) << " Request completed."
-                  << Colors::RESET << "\n";
     }
 }
 

@@ -1,3 +1,5 @@
+// Save, load and list conversation sessions on disk.
+
 #include "lorea.hpp"
 
 #include <string>
@@ -117,7 +119,7 @@ std::optional<std::string> LOREA::session_menu() {
         labels.push_back(item.name + "  " + Colors::DIM + Colors::GRAY + when + " \xC2\xB7 " +
                          std::to_string(kb) + " KB" + Colors::RESET);
     }
-    std::optional<int> idx = interactive_menu("load session", labels, Colors::VIOLET);
+    std::optional<int> idx = interactive_menu("load session", labels, MUTED);
     if (!idx.has_value())
         return std::nullopt;
     return sessions[static_cast<size_t>(*idx)].path;

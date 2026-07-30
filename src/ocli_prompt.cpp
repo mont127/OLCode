@@ -1,3 +1,5 @@
+// The default system prompt text.
+
 #include "ocli_prompt.hpp"
 
 #include <string>
@@ -318,8 +320,8 @@ Response guidelines:
 
 `<CRITICAL_COPYRIGHT_COMPLIANCE>`
 
-===============================================================================  
-COPYRIGHT COMPLIANCE RULES - READ CAREFULLY - VIOLATIONS ARE SEVERE  
+===============================================================================
+COPYRIGHT COMPLIANCE RULES - READ CAREFULLY - VIOLATIONS ARE SEVERE
 ===============================================================================
 
 `<core_copyright_principle>`
@@ -380,7 +382,6 @@ Before including ANY text from search results, ask yourself:
 
 `</self_check_before_responding>`
 
-
 `<consequences_reminder>`
 
 Copyright violations:
@@ -394,8 +395,6 @@ This is why these rules are absolute and non-negotiable.
 `</consequences_reminder>`
 
 `</CRITICAL_COPYRIGHT_COMPLIANCE>`
-
-
 
 `<harmful_content_safety>`
 
@@ -444,4 +443,4 @@ For implementation requests, finish with files touched and verification results.
     return prompt;
 }
 
-}  // namespace ocli
+}

@@ -1,3 +1,5 @@
+// Tool-call parsing API.
+
 #pragma once
 
 #include <string>

@@ -1,33 +1,17 @@
-#pragma once
+// Dashboard server entry points and the embedded web asset symbols.
 
-// LAN web dashboard for the OCLI agent.
-//
-// FIXED CONTRACT (all dashboard files must agree):
-//   GET  /            -> 200 text/html, body = DASHBOARD_HTML
-//   GET  /api/info    -> {"model","backend","lan_url","auto","tool_access"}
-//   GET  /api/history -> {"messages":[{"role","content"}...]}  (user/assistant only)
-//   GET  /api/status  -> {"busy","status","current","error","turn_id"}
-//   POST /api/chat    -> body {"message":"..."} -> {"status":"accepted","busy","turn_id"}
-//   POST /api/exec    -> body {"command":"..."} -> {"output":"..."}
-//
-// The server binds 0.0.0.0:port and reports the machine's first non-loopback
-// IPv4 as lan_url = "http://<ip>:<port>".
+#pragma once
 
 namespace ocli {
 
-class LOREA;  // fwd
+class LOREA;
 
-// Starts the dashboard HTTP server on a background thread and returns
-// immediately. Binds 0.0.0.0:port so the LAN can reach it.
 bool start_dashboard(LOREA& agent, int port = 8730);
 
-// The full self-contained dashboard page (defined in src/dashboard_html.cpp).
 extern const char* DASHBOARD_HTML;
 
-// Vendored xterm.js 5.3.0 assets (defined in src/vendor_assets.cpp), served at
-// /vendor/* so the embedded terminal works offline.
 extern const char* XTERM_JS;
 extern const char* XTERM_CSS;
 extern const char* XTERM_FIT_JS;
 
-}  // namespace ocli
+}

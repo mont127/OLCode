@@ -1,3 +1,5 @@
+// Entry point: parses argv, applies app-mode defaults, then starts the REPL or the app server.
+
 #include "lorea.hpp"
 #include "terminal.hpp"
 #include "live_view.hpp"
@@ -32,10 +34,6 @@ private:
 
 std::terminate_handler g_prev_terminate = nullptr;
 
-// On any uncaught exception / std::terminate, restore the terminal before the
-// process aborts so a crash can't leave the user's shell in the alt screen with
-// mouse reporting on. Then chain to the previous handler (which prints the
-// standard "terminating due to uncaught exception" line and aborts).
 void ocli_terminate_handler() {
     live_emergency_restore();
     if (g_prev_terminate) g_prev_terminate();
@@ -203,15 +201,15 @@ int run_spawn_agent_worker() {
             agent->tool_access = tool_access;
             agent->allow_spawn_agents = false;
             agent->non_interactive = true;
-            agent->effort_level = effort;             // consumed by ephemeral_reminders()/effort_message()
-            agent->web_search_enabled = ws_enabled;   // consumed by process_chat() tool filter
+            agent->effort_level = effort;
+            agent->web_search_enabled = ws_enabled;
 
             json vmurl = jget(request, "mpc_url");
             if (jtruthy(vmurl)) {
                 std::string murl = jstr(vmurl);
                 json vmtok = jget(request, "mpc_token");
                 std::string mtok = jtruthy(vmtok) ? jstr(vmtok) : std::string("");
-                agent->activate_mpc(murl, mtok);      // route this turn through the MPC server
+                agent->activate_mpc(murl, mtok);
             }
 
             std::string sys0;
@@ -316,7 +314,7 @@ int run_main(const std::vector<std::string>& argv) {
     const std::string usage =
         "usage: " + prog + " [-h] [--model MODEL] [--auto] [--app[=PORT]]\n"
         "        [--backend {" + choices_str + "}]\n"
-        "        [--url URL] [--skip-install]";
+        "        [--url URL] [--skip-install] [--debug]";
 
     auto fail = [&](const std::string& msg) -> void {
         std::cerr << usage << "\n" << prog << ": error: " << msg << "\n";
@@ -378,6 +376,8 @@ int run_main(const std::vector<std::string>& argv) {
         } else if (key == "--url") {
             url = need_value("--url");
             has_url = true;
+        } else if (key == "--debug") {
+            set_debug_logging(true);
         } else if (key == "--skip-install") {
             skip_install = true;
         } else if (key == "--spawn-agent-worker") {
@@ -403,30 +403,41 @@ int run_main(const std::vector<std::string>& argv) {
         : BACKEND_DEFAULT_MODELS.at(backend);
 
     if (app_mode) {
-        // App shell only: default to the Qwythos model via the registered ollama
-        // tag, but allow overrides so a missing tag doesn't hard-fail. Never runs
-        // for a plain `ocli` invocation, so the CLI is unchanged.
-        backend = "ollama";
-        chosen_model = "qwythos";
+
+        // LOREA.app defaults to the local MLX build (LOREA-cyber v5.8 via the mlx entry in
+        // BACKEND_DEFAULT_MODELS, which already resolves newest-first) rather than ollama.
+        backend = "mlx";
+        chosen_model = BACKEND_DEFAULT_MODELS.at("mlx");
         if (const char* b = std::getenv("LOREA_APP_BACKEND")) { if (*b) backend = b; }
         if (const char* m = std::getenv("LOREA_APP_MODEL"))   { if (*m) chosen_model = m; }
+
+        if (backend == "ollama" && !ollama_model_usable(chosen_model)) {
+            std::string alt = first_usable_ollama_model();
+            if (!alt.empty()) {
+                std::cerr << prog << ": model '" << chosen_model
+                          << "' is not loadable (missing/corrupt in ollama); using '"
+                          << alt << "' instead\n";
+                chosen_model = alt;
+            } else {
+                std::cerr << prog << ": warning: no loadable ollama model found; "
+                          << "pull one (e.g. `ollama run qwythos`) or /connect to an MPC server\n";
+            }
+        }
     }
 
     std::optional<std::string> url_opt;
     if (has_url) url_opt = url;
 
     LOREA agent(chosen_model, auto_mode, backend, url_opt);
-    agent.auto_reconnect_mpc();   // restore a previously saved MPC connection, if reachable
+    agent.auto_reconnect_mpc();
     if (app_mode) {
-        // Headless server for the LOREA.app shell: no interactive REPL (there is no
-        // TTY when spawned by the app). Serve the dashboard and block; the detached
-        // serve() thread holds &agent by reference, so agent must outlive this loop.
+
         if (!start_dashboard(agent, app_port)) {
             std::cerr << prog << ": dashboard failed to bind port " << app_port << "\n";
             return 1;
         }
         std::cerr << prog << ": LOREA app server on http://127.0.0.1:" << app_port << "\n";
-        for (;;) ::pause();   // block forever; SIGTERM (app quit) ends the process
+        for (;;) ::pause();
         return 0;
     }
     agent.run();

@@ -1,3 +1,5 @@
+// Interactive REPL commands (retry, undo, copy, diff, shell) and the slash-command table.
+
 #include "lorea.hpp"
 #include "dashboard.hpp"
 #include "pty_session.hpp"
@@ -150,14 +152,6 @@ double now_seconds() {
     struct timeval tv;
     gettimeofday(&tv, nullptr);
     return static_cast<double>(tv.tv_sec) + static_cast<double>(tv.tv_usec) / 1e6;
-}
-
-std::string random_choice_local(const std::vector<std::string>& v) {
-    static std::mutex m;
-    std::lock_guard<std::mutex> lk(m);
-    static std::mt19937 g(std::random_device{}());
-    std::uniform_int_distribution<std::size_t> d(0, v.size() - 1);
-    return v[d(g)];
 }
 
 std::string dashboard_lan_ipv4() {
@@ -383,23 +377,23 @@ void LOREA::run_oneoff_shell(const std::string& command_in) {
     }
     std::string indent = left_indent();
     std::string sub = utf8_substr(command, 0, 60);
-    std::cout << "\n" << indent << frame_title("SHELL", Colors::MAGENTA, sub.c_str()) << "\n";
+    std::cout << "\n" << indent << frame_title("shell", MUTED, sub.c_str()) << "\n";
     try {
         ProcResult result = run_shell(command, 60.0);
         if (result.timed_out) {
-            print_frame_text("(timed out after 60s)", Colors::MAGENTA);
-            std::cout << indent << frame_bottom(Colors::MAGENTA) << "\n\n";
+            print_frame_text("(timed out after 60s)", MUTED);
+            std::cout << indent << frame_bottom(MUTED) << "\n\n";
         } else {
 
             std::string body = rstrip_py(result.out);
             if (body.empty()) body = "(no output)";
             std::string hint = "exit " + std::to_string(result.exit_code);
-            print_frame_text(truncate_output(body, 8000), Colors::MAGENTA);
-            std::cout << indent << frame_bottom(Colors::MAGENTA, hint.c_str()) << "\n\n";
+            print_frame_text(truncate_output(body, 8000), MUTED);
+            std::cout << indent << frame_bottom(MUTED, hint.c_str()) << "\n\n";
         }
     } catch (const std::exception& e) {
-        print_frame_text(std::string("error: ") + e.what(), Colors::MAGENTA);
-        std::cout << indent << frame_bottom(Colors::MAGENTA) << "\n\n";
+        print_frame_text(std::string("error: ") + e.what(), MUTED);
+        std::cout << indent << frame_bottom(MUTED) << "\n\n";
     }
 }
 
@@ -483,21 +477,7 @@ void LOREA::goodbye() {
             " " + Colors::DIM + Colors::GRAY + "elapsed" + Colors::RESET,
     };
     std::string sep = std::string(" ") + Colors::DIM + Colors::GRAY + "·" + Colors::RESET + " ";
-    std::string indent = left_indent();
-
-    std::string title;
-    if (session_tools_run == 0 && session_turns == 0) {
-        title = "SEE YOU SOON";
-    } else if (session_tools_run >= 10 || files >= 3) {
-        title = "GREAT SESSION";
-    } else {
-        title = "NICE WORK";
-    }
-    celebrate(title, nullptr, ACCENT);
-    std::cout << indent << join_str(bits, sep) << "\n";
-    auto p = pick_logo_phrase();
-    std::string phrase = (p && !p->empty()) ? *p : std::string("until next time");
-    std::cout << indent << Colors::DIM << Colors::ITALIC << ACCENT << phrase << Colors::RESET << "\n\n";
+    celebrate("Session complete", join_str(bits, sep).c_str(), ACCENT);
 }
 
 std::vector<std::string> LOREA::welcome_lines(const std::string& phrase) {
@@ -518,7 +498,6 @@ std::vector<std::string> LOREA::welcome_lines(const std::string& phrase) {
 }
 
 void LOREA::run() {
-    std::optional<std::string> welcome_phrase = pick_logo_phrase();
     bool first_prompt = true;
 
     auto live_status = [this]() -> std::string {
@@ -571,10 +550,10 @@ void LOREA::run() {
                 };
                 std::string meta_left = gradient_text(" ◆ OCLI ", &FLAIR_RAMP);
                 std::string meta_right =
-                    chip(backend, model, C::SKY) + " " +
-                    chip("auto", auto_mode ? "on" : "off", auto_mode ? C::MINT : C::SLATE) + " " +
-                    chip("plan", planning_enabled ? "on" : "off", planning_enabled ? C::AMBER : C::SLATE);
-                if (mpc_url && !mpc_url->empty()) meta_right += " " + chip("mpc", "on", C::PINK);
+                    chip(backend, model, C::WHITE) + " " +
+                    chip("auto", auto_mode ? "on" : "off", auto_mode ? ACCENT : C::SLATE) + " " +
+                    chip("plan", planning_enabled ? "on" : "off", planning_enabled ? ACCENT : C::SLATE);
+                if (mpc_url && !mpc_url->empty()) meta_right += " " + chip("mpc", "on", ACCENT);
                 meta_right = " " + meta_right + " ";
                 int fill = width - 4 - static_cast<int>(clean_len(meta_left)) - static_cast<int>(clean_len(meta_right));
                 if (fill < 2) {
@@ -583,14 +562,14 @@ void LOREA::run() {
                     fill = std::max(2, width - 4 - static_cast<int>(clean_len(meta_left)) -
                                        static_cast<int>(clean_len(meta_right)));
                 }
-                return std::string(indent) + C::DIM + C::CYAN + "╭" + C::RESET +
-                       meta_left + "\033[38;5;51m" + repeat_str("━", fill) + C::RESET +
-                       meta_right + C::DIM + C::VIOLET + "╮" + C::RESET;
+                return std::string(indent) + MUTED + "╭" + C::RESET +
+                       meta_left + MUTED + repeat_str("─", fill) + C::RESET +
+                       meta_right + MUTED + "╮" + C::RESET;
             };
             auto render_top = [&]() -> std::string {
 
                 if (first_prompt) {
-                    std::vector<std::string> lines = welcome_lines(welcome_phrase.value_or(""));
+                    std::vector<std::string> lines = welcome_lines("");
                     lines.push_back("");
                     lines.push_back(render_bar());
                     return join_str(lines, "\n");
@@ -598,8 +577,8 @@ void LOREA::run() {
                 return render_bar();
             };
             auto render_prompt = []() -> std::string {
-                return left_indent() + Colors::DIM + Colors::CYAN + "│" + Colors::RESET + " " +
-                       gradient_text("❯", &FLAIR_RAMP) + " ";
+                return left_indent() + MUTED + "│" + Colors::RESET + " " +
+                       ACCENT + Colors::BOLD + "❯" + Colors::RESET + " ";
             };
 
             std::string user_input;
@@ -624,7 +603,7 @@ void LOREA::run() {
                 std::cout << left_indent() << MUTED << "╰" << repeat_str("─", term_width() - 2)
                           << "╯" << Colors::RESET << "\n";
                 std::cout << "\n";
-                std::cout << soft_rule(Colors::VIOLET) << "\n";
+                std::cout << soft_rule() << "\n";
             } else if (!user_input.empty()) {
                 std::cout << left_indent() << ACCENT << Colors::BOLD << "\xE2\x9D\xAF "
                           << Colors::RESET << Colors::WHITE << user_input << Colors::RESET << "\n";
@@ -772,18 +751,6 @@ void LOREA::run() {
                 } else if (cmd == "/tasks") {
                     print_tasks();
                     continue;
-                } else if (cmd == "/phrase") {
-                    if (!LOGO_PHRASES.empty()) {
-                        std::string phrase = random_choice_local(LOGO_PHRASES);
-                        int cols = term_cols();
-                        int pad = std::max(0, (cols - static_cast<int>(clean_len(phrase))) / 2);
-                        std::cout << "\n" << std::string(static_cast<std::size_t>(pad), ' ')
-                                  << Colors::DIM << Colors::ITALIC << ACCENT << phrase
-                                  << Colors::RESET << "\n\n";
-                    } else {
-                        log_info("No phrases are configured.");
-                    }
-                    continue;
                 } else if (cmd == "/effort") {
                     const std::map<std::string, std::string> EBARS = {
                         {"basic", "▰▱▱▱▱"}, {"tuned", "▰▰▱▱▱"}, {"elite", "▰▰▰▱▱"},
@@ -828,7 +795,7 @@ void LOREA::run() {
                                               Colors::RESET + "  " + Colors::DIM + Colors::GRAY +
                                               ETAG.at(k) + Colors::RESET + ctag);
                         }
-                        std::optional<int> idx = interactive_menu("effort level", options, Colors::VIOLET);
+                        std::optional<int> idx = interactive_menu("effort level", options, MUTED);
                         if (idx.has_value()) {
                             apply_effort(EFFORT_ORDER[static_cast<std::size_t>(*idx)]);
                         }
@@ -884,7 +851,6 @@ void LOREA::run() {
                         help_row("/plan",                            "toggle autonomous planning mode"),
                         help_row("/vram [--auto]",                   "tune Mac GPU memory limit (clickable slider)"),
                         help_row("/theme [name]",                    "change the accent color"),
-                        help_row("/phrase",                          "show a random phrase"),
                         help_row("/help",                            "show this command list"),
                     }, MUTED);
                     continue;
@@ -974,7 +940,7 @@ void LOREA::run() {
                 } else if (cmd == "/clear") {
                     std::cout << "\033[3J\033[H\033[2J";
                     std::cout.flush();
-                    print_logo(pick_logo_phrase());
+                    print_logo();
                     continue;
                 } else if (cmd == "/usage") {
                     print_usage();
@@ -987,7 +953,7 @@ void LOREA::run() {
                                                            : std::string(""));
                     continue;
                 } else {
-                    log_info("Unknown command: " + cmd);
+                    log_warn("Unknown command: " + cmd);
                     continue;
                 }
             }
@@ -1047,6 +1013,17 @@ void LOREA::run() {
                 } else {
                     break;
                 }
+            }
+            if (messages.size() > 1) {
+                if (autosave_name.empty()) {
+                    std::time_t t = std::time(nullptr);
+                    std::tm tmv{};
+                    ::localtime_r(&t, &tmv);
+                    char buf[32];
+                    std::strftime(buf, sizeof buf, "%Y%m%d_%H%M%S", &tmv);
+                    autosave_name = std::string("autosave_") + buf;
+                }
+                save_session(autosave_name);
             }
         } catch (const std::runtime_error& e) {
 

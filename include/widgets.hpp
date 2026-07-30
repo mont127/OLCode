@@ -1,3 +1,5 @@
+// Interactive terminal widget API.
+
 #pragma once
 
 #include <string>

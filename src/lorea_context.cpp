@@ -1,3 +1,5 @@
+// Context-window management: compaction, summarisation and trimming of message history.
+
 #include "lorea.hpp"
 
 #include <algorithm>
@@ -391,11 +393,32 @@ void LOREA::sync_context_budget() {
     long ctx = 0;
     if (const char* e = std::getenv("LOREA_CONTEXT")) ctx = parse_ctx(e);
     if (ctx <= 0) {
-        std::string lm = model_name;
-        for (auto& c : lm) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (lm.find("qwythos") != std::string::npos || lm.find("-1m") != std::string::npos)
-            ctx = 65536;   // Qwythos 1M model -> a big, RAM-safe default (4x the old 16k). A literal
-                           // 1M KV cache needs far more than 32GB; raise via LOREA_CONTEXT (e.g. 1M).
+        // A local model directory knows its own context length. Read it instead of guessing
+        // from the name (name matching silently gave new models the 16k default).
+        if (!model_name.empty() && (model_name[0] == '/' || model_name[0] == '~')) {
+            std::string cfg = expanduser(model_name) + "/config.json";
+            std::ifstream cf(cfg);
+            if (cf) {
+                try {
+                    json c = json::parse(cf);
+                    const json* t = c.contains("text_config") ? &c["text_config"] : &c;
+                    if (t->contains("max_position_embeddings"))
+                        ctx = (*t)["max_position_embeddings"].get<long>();
+                } catch (...) {
+                }
+            }
+            // Cap the default: the full 262k of KV cache will not fit alongside a 20GB model.
+            // Override with LOREA_CONTEXT if you have headroom.
+            if (ctx > 131072) ctx = 131072;
+        }
+        if (ctx <= 0) {
+            std::string lm = model_name;
+            for (auto& c : lm) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (lm.find("qwythos") != std::string::npos || lm.find("-1m") != std::string::npos ||
+                lm.find("lorea-cyber") != std::string::npos || lm.find("a3b") != std::string::npos ||
+                lm.find("qwen3.6") != std::string::npos || lm.find("qwen3.5") != std::string::npos)
+                ctx = 65536;
+        }
     }
     if (ctx <= 0) ctx = COMPACT_TOKEN_BUDGET;
     if (ctx < 2000) ctx = 2000;
@@ -955,8 +978,6 @@ std::vector<Message> LOREA::ephemeral_reminders() {
 std::vector<Message> LOREA::server_messages() {
     std::vector<Message> prepared;
 
-    // Collect all system-role content first — many models (Qwen3, etc.) require
-    // the system message to be strictly at position 0 in the messages array.
     std::string system_content;
     auto append_system = [&](const std::string& s) {
         if (s.empty()) return;
@@ -964,7 +985,6 @@ std::vector<Message> LOREA::server_messages() {
         system_content += s;
     };
 
-    // Pull system messages out of main history
     for (const auto& message : messages) {
         std::string role;
         const json* rp = find_key(message, "role");
@@ -972,7 +992,6 @@ std::vector<Message> LOREA::server_messages() {
         if (role == "system") append_system(content_or_empty(message));
     }
 
-    // Pull system messages out of ephemeral reminders
     for (const auto& r : ephemeral_reminders()) {
         std::string role;
         const json* rp = find_key(r, "role");
@@ -980,7 +999,6 @@ std::vector<Message> LOREA::server_messages() {
         if (role == "system") append_system(content_or_empty(r));
     }
 
-    // Prepend merged system message if any
     if (!system_content.empty()) {
         json sys = json::object();
         sys["role"] = "system";
@@ -988,7 +1006,6 @@ std::vector<Message> LOREA::server_messages() {
         prepared.push_back(std::move(sys));
     }
 
-    // Now append non-system messages from main history
     for (const auto& message : messages) {
         std::string role;
         const json* rp = find_key(message, "role");
@@ -996,7 +1013,7 @@ std::vector<Message> LOREA::server_messages() {
         else if (rp->is_string()) role = rp->get<std::string>();
         else role = "";
 
-        if (role == "system") continue; // already handled above
+        if (role == "system") continue;
 
         std::string content = content_or_empty(message);
 
@@ -1052,7 +1069,6 @@ std::vector<Message> LOREA::server_messages() {
         }
     }
 
-    // Append non-system ephemeral reminders at the end
     for (auto& r : ephemeral_reminders()) {
         std::string role;
         const json* rp = find_key(r, "role");

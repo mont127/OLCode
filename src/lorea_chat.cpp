@@ -1,3 +1,5 @@
+// The core chat turn: builds requests, streams the reply, runs tool calls to completion.
+
 #include "lorea.hpp"
 
 #include "secutil.hpp"
@@ -268,6 +270,10 @@ const char* const CREATE_PLAN_JSON = R"json({"type":"function","function":{"name
 const char* const UPDATE_TASK_JSON = R"json({"type":"function","function":{"name":"update_task","description":"Update a plan task's status. Mark exactly one task 'doing' before working it, then 'done' when finished.","parameters":{"type":"object","properties":{"index":{"type":"string","description":"The 1-based index of the task"},"status":{"type":"string","enum":["todo","doing","done"]}},"required":["index","status"]}}})json";
 
 constexpr int CLOUD_MAX_TOKENS = 8192;
+// mlx_lm/llama.cpp servers default to max_tokens=512 when a request omits it, which is enough
+// for short tool-call decisions but not for a reasoning-capable model working through a large
+// tool result (it can burn the whole budget on <think> content before any real answer starts).
+constexpr int LOCAL_MAX_TOKENS = 8192;
 constexpr int MAX_ROUNDS_LIMIT = 50;
 constexpr int MAX_WEDGE_RECOVERIES_LIMIT = 2;
 
@@ -412,6 +418,7 @@ bool LOREA::process_chat() {
             json response_metadata = json::object();
             bool first_chunk = true;
             bool in_thought = false, in_tool = false, thought_labeled = false;
+            bool reasoning_open = false;
             std::string line_buffer;
             bool displayed_any = false;
 
@@ -541,7 +548,7 @@ bool LOREA::process_chat() {
                 if (script.empty()) {
                     spinner->stop();
                     interrupter.stop_listening();
-                    log_info("nvidia_backend.py not found. Put it next to the ocli binary or in "
+                    log_warn("nvidia_backend.py not found. Put it next to the ocli binary or in "
                              "~/ocli-cpp/, then retry.");
                     json am = json::object();
                     am["role"] = "assistant";
@@ -578,7 +585,7 @@ bool LOREA::process_chat() {
                     spinner->stop();
                     interrupter.stop_listening();
                     if (!tmp.empty()) std::remove(tmp.c_str());
-                    log_info("Could not launch the NVIDIA Python bridge (is python3 installed?).");
+                    log_warn("Could not launch the NVIDIA Python bridge (is python3 installed?).");
                     json am = json::object();
                     am["role"] = "assistant";
                     am["content"] = "[NVIDIA BRIDGE FAILED]";
@@ -607,7 +614,7 @@ bool LOREA::process_chat() {
                 req.follow_redirects = true;
 
                 if (backend == "ollama") {
-                    // Hoist all system messages to position 0 — models like Qwen3 require it.
+
                     auto get_str = [](const json& m, const char* k) -> std::string {
                         if (m.is_object() && m.contains(k) && m.at(k).is_string())
                             return m.at(k).get<std::string>();
@@ -661,7 +668,7 @@ bool LOREA::process_chat() {
                     if (!headers_opt) {
                         spinner->stop();
                         interrupter.stop_listening();
-                        log_info("No Anthropic credential set. Set ANTHROPIC_API_KEY (or "
+                        log_warn("No Anthropic credential set. Set ANTHROPIC_API_KEY (or "
                                  "ANTHROPIC_AUTH_TOKEN for a gateway) or run /backend.");
                         json am = json::object();
                         am["role"] = "assistant";
@@ -692,6 +699,24 @@ bool LOREA::process_chat() {
                         payload["temperature"] = 0.5;
                         payload["top_p"] = 0.95;
                         payload["repetition_penalty"] = 1.1;
+                        // /effort drives the model's native reasoning block. Both llama-server
+                        // and mlx_lm read chat_template_kwargs per request and pass it to the
+                        // chat template, so BASIC genuinely skips the <think> block rather than
+                        // just asking the model nicely to be brief.
+                        {
+                            const auto& lv = effort_levels();
+                            auto it = lv.find(effort_level);
+                            bool think = (it == lv.end()) ? true : it->second.think;
+                            payload["chat_template_kwargs"]["enable_thinking"] = think;
+                        }
+                        // mlx_lm server defaults repetition_context_size to 20 tokens, which is
+                        // shorter than a single sentence. A model that loops on a long sentence
+                        // (seen in practice: a ~35-token line repeated for the full token budget)
+                        // never gets penalized because the earlier occurrence has already scrolled
+                        // out of that tiny window by the time it repeats. Widen it so sentence- and
+                        // paragraph-scale loops are actually visible to the penalty.
+                        payload["repetition_context_size"] = 400;
+                        payload["max_tokens"] = LOCAL_MAX_TOKENS;
                     }
                     req.headers = {{"Content-Type", "application/json"}};
                     if (backend == "openai") {
@@ -699,7 +724,7 @@ bool LOREA::process_chat() {
                         if (!key || key->empty()) {
                             spinner->stop();
                             interrupter.stop_listening();
-                            log_info("No OpenAI API key set. Set OPENAI_API_KEY or run /backend.");
+                            log_warn("No OpenAI API key set. Set OPENAI_API_KEY or run /backend.");
                             json am = json::object();
                             am["role"] = "assistant";
                             am["content"] = "[NO API KEY]";
@@ -879,9 +904,21 @@ bool LOREA::process_chat() {
                                 continue;
                             json delta = jval(data["choices"][0], "delta");
                             if (!delta.is_object()) delta = json::object();
+                            // Some local servers (mlx_lm) report chain-of-thought out-of-band as
+                            // delta.reasoning instead of embedding <think> tags in delta.content.
+                            // Wrap it in synthetic <thought> tags so it uses the same live display
+                            // and gets stripped from the final answer the same way inline tags do,
+                            // instead of being silently dropped and read back as an empty response.
+                            const json* rsn = jget(delta, "reasoning");
+                            if (rsn && jtruthy(*rsn)) {
+                                if (!reasoning_open) { process_token("<thought>"); reasoning_open = true; }
+                                process_token(rsn->is_string() ? rsn->get<std::string>() : py_str(*rsn));
+                            }
                             const json* c = jget(delta, "content");
-                            if (c && jtruthy(*c))
+                            if (c && jtruthy(*c)) {
+                                if (reasoning_open) { process_token("</thought>"); reasoning_open = false; }
                                 process_token(c->is_string() ? c->get<std::string>() : py_str(*c));
+                            }
                             const json* tcs = jget(delta, "tool_calls");
                             if (tcs && tcs->is_array()) {
                                 for (auto& tc : *tcs) {
@@ -1359,7 +1396,7 @@ bool LOREA::process_chat() {
             {
                 std::vector<std::string> thoughts = findall_group1(thought_re, content);
                 if (!thoughts.empty() && !strip(thoughts[0]).empty()) {
-                    std::cout << "\n" << status_label("THINKING", Colors::ORANGE) << "\n";
+                    std::cout << "\n" << status_label("Thinking", MUTED) << "\n";
                     for (const auto& t : thoughts)
                         if (!strip(t).empty())
                             std::cout << Colors::GRAY << "  > " << render_text(strip(t))
@@ -1598,7 +1635,7 @@ bool LOREA::process_chat() {
                     if (!gate.first) {
                         std::string refusal = gate.second ? *gate.second : "";
                         log_warn("SAFETY: blocked an offensive/destructive tool call");
-                        std::cout << "\n  " << status_label("SAFETY BLOCK", Colors::RED) << " " << Colors::GRAY
+                        std::cout << "\n  " << status_label("Blocked", Colors::RED) << " " << Colors::GRAY
                                   << "\xE2\x94\x82" << Colors::RESET << " " << refusal << "\n";
                         json tm = json::object();
                         tm["role"] = "tool";

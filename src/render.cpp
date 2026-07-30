@@ -1,3 +1,5 @@
+// Markdown and code rendering for terminal display.
+
 #include "render.hpp"
 #include "ansi.hpp"
 #include "live_view.hpp"
@@ -9,8 +11,6 @@
 #include <sstream>
 #include <algorithm>
 #include <cstdio>
-#include <random>
-#include <mutex>
 #include <chrono>
 
 namespace ocli {
@@ -53,14 +53,6 @@ std::string ljust_utf8(const std::string& s, int width) {
     int len = static_cast<int>(utf8_len(s));
     if (len >= width) return s;
     return s + std::string(static_cast<std::size_t>(width - len), ' ');
-}
-
-std::string random_choice(const std::vector<std::string>& v) {
-    static std::mutex m;
-    std::lock_guard<std::mutex> lk(m);
-    static std::mt19937 g(std::random_device{}());
-    std::uniform_int_distribution<std::size_t> d(0, v.size() - 1);
-    return v[d(g)];
 }
 
 std::string py_str(const json& v) {
@@ -112,7 +104,7 @@ std::string render_inline(const std::string& text) {
     t = std::regex_replace(t, RE_HR,   std::string(C::DIM) + C::GRAY + hr_dashes() + C::RESET);
     t = std::regex_replace(t, RE_BQ,   std::string(C::TEAL) + "▎" + C::RESET + " " + C::ITALIC + C::GRAY + "$1" + C::RESET);
     t = std::regex_replace(t, RE_BULLET, std::string("$1") + C::TEAL + "• " + C::RESET);
-    t = std::regex_replace(t, RE_NUM,    std::string("$1") + C::ORANGE + "$2. " + C::RESET);
+    t = std::regex_replace(t, RE_NUM,    std::string("$1") + C::TEAL + "$2. " + C::RESET);
     return t;
 }
 
@@ -174,40 +166,42 @@ void fake_loading(const std::string& msg, double duration) {
     std::size_t i = 0;
     std::string indent = left_indent();
     while (std::chrono::steady_clock::now() < end_time) {
-        int shade = FLAIR_RAMP[i % FLAIR_RAMP.size()];
-        std::cout << indent << "\033[38;5;" << shade << "m"
-                  << frames[i % frames.size()] << C::RESET << " "
+        std::cout << indent << ACCENT << frames[i % frames.size()] << C::RESET << " "
                   << C::DIM << C::GRAY << msg << C::RESET << "\r";
         std::cout.flush();
         std::this_thread::sleep_for(std::chrono::duration<double>(0.06));
         ++i;
     }
-    std::cout << indent << C::GREEN << C::BOLD << "✓︎" << C::RESET << " "
+    std::cout << indent << C::GREEN << C::BOLD << "✓" << C::RESET << " "
               << C::DIM << C::GRAY << msg << C::RESET << "\033[K\n";
     std::cout.flush();
 }
 
 void log_tool(const std::string& msg) { fake_loading(msg); }
 
+namespace {
+bool g_debug_logging = false;
+}
+
+void set_debug_logging(bool on) { g_debug_logging = on; }
+bool debug_logging() { return g_debug_logging; }
+
 void log_info(const std::string& msg) {
+    if (!g_debug_logging) return;
     using C = Colors;
-    std::cout << left_indent() << C::CYAN << C::BOLD << "◇" << C::RESET << " "
-              << C::BG_DARK << C::SKY << C::BOLD << " INFO " << C::RESET
-              << "  " << msg << C::RESET << "\n";
+    std::cout << left_indent() << C::DIM << C::GRAY << "· " << msg << C::RESET << "\n";
 }
 
 void log_ok(const std::string& msg) {
     using C = Colors;
-    std::cout << left_indent() << C::MINT << C::BOLD << "◆" << C::RESET << " "
-              << C::BG_DARK << C::MINT << C::BOLD << " DONE " << C::RESET
-              << "  " << msg << C::RESET << "\n";
+    std::cout << left_indent() << C::GREEN << C::BOLD << "✓" << C::RESET << " "
+              << msg << C::RESET << "\n";
 }
 
 void log_warn(const std::string& msg) {
     using C = Colors;
-    std::cout << left_indent() << C::AMBER << C::BOLD << "▲" << C::RESET << " "
-              << C::BG_DARK << C::AMBER << C::BOLD << " WARN " << C::RESET
-              << "  " << msg << C::RESET << "\n";
+    std::cout << left_indent() << C::AMBER << C::BOLD << "!" << C::RESET << " "
+              << msg << C::RESET << "\n";
 }
 
 std::string summarize_tool_args(const json& args) {
@@ -315,7 +309,7 @@ void print_diff(const std::vector<std::string>& diff_lines) {
     }
     std::string subtitle = "+" + std::to_string(added) + " -" + std::to_string(removed)
                          + (header_file.empty() ? "" : (" · " + header_file));
-    std::cout << "\n" << indent << frame_title("DIFF", C::MAGENTA, subtitle.c_str()) << "\n";
+    std::cout << "\n" << indent << frame_title("diff", MUTED, subtitle.c_str()) << "\n";
 
     auto tinted_row = [&](const std::string& marker, const std::string& body,
                           const char* fg, const char* bg) -> std::string {
@@ -340,30 +334,7 @@ void print_diff(const std::vector<std::string>& diff_lines) {
             std::cout << indent << "  " << C::GRAY << stripped << C::RESET << "\n";
         }
     }
-    std::cout << indent << frame_bottom(C::MAGENTA) << "\n\n";
-}
-
-const std::vector<std::string> LOGO_PHRASES = {
-    "ship the sharp edge",
-    "patch fast, verify faster",
-    "terminal energy, local control",
-    "tools armed, context loaded",
-    "small diff, big velocity",
-    "read it, patch it, prove it",
-    "focus mode: no fluff",
-    "make the machine blink first",
-    "turn prompts into commits",
-    "build pressure, release clean",
-    "one prompt closer to done",
-    "high signal, low drag",
-    "agent loop locked in",
-    "clean code, bright trace",
-    "run the test, earn the glow",
-};
-
-std::optional<std::string> pick_logo_phrase() {
-    if (LOGO_PHRASES.empty()) return std::nullopt;
-    return random_choice(LOGO_PHRASES);
+    std::cout << indent << frame_bottom(MUTED) << "\n\n";
 }
 
 namespace {
@@ -557,10 +528,11 @@ std::vector<std::string> logo_lines(const std::optional<std::string>& phrase) {
 
     int full_width = static_cast<int>(utf8_len(LOGO_LORE_FULL[0]) + utf8_len(LOGO_A_FULL[0]));
     int mini_width = static_cast<int>(utf8_len(LOGO_LORE_MINI[0]) + utf8_len(LOGO_A_MINI[0]));
-    int flower_height = static_cast<int>(LOGO_FLOWER_LINES.size());
     int lockup_w = LOGO_FLOWER_LINES.empty() ? 0 : lockup_width();
 
-    if (!LOGO_FLOWER_LINES.empty() && cols >= lockup_w + 2 && term_rows() >= flower_height + 4) {
+    // Width is a hard constraint; height is not — the classic view scrolls, so a
+    // short window just means the top of the flower scrolls off, not a broken draw.
+    if (!LOGO_FLOWER_LINES.empty() && cols >= lockup_w + 2) {
         auto lk = logo_lockup_lines(cols);
         out.insert(out.end(), lk.begin(), lk.end());
     } else if (cols >= full_width + 2) {
@@ -576,31 +548,6 @@ std::vector<std::string> logo_lines(const std::optional<std::string>& phrase) {
         }
     } else {
         out.push_back(center_pad_logo(cols, 4) + C::BOLD + "\033[38;5;46mOCL\033[38;5;51mI" + C::RESET);
-    }
-
-    {
-        std::string label = gradient_text(" ◆ OCLI ", &FLAIR_RAMP);
-        std::string tail = std::string(C::DIM) + C::GRAY + "terminal autopilot " + C::RESET;
-        std::string line = label + tail;
-        int inner = static_cast<int>(clean_len(line));
-        std::string bar = rep_str("─", inner);
-        std::string pill_pad = center_pad_logo(cols, inner + 2);
-        out.push_back("");
-        out.push_back(pill_pad + "\033[38;5;51m" + "╭" + bar + "╮" + C::RESET);
-        out.push_back(pill_pad + "\033[38;5;51m" + "│" + C::RESET + line +
-                      "\033[38;5;51m" + "│" + C::RESET);
-        out.push_back(pill_pad + "\033[38;5;99m" + "╰" + bar + "╯" + C::RESET);
-    }
-
-    {
-        auto chip = [&](const std::string& text, const char* fg) {
-            return std::string(C::BG_DARK) + fg + C::BOLD + " " + text + " " + C::RESET;
-        };
-        std::string chips = chip("TOOLS", C::MINT) + " " + chip("SHELL", C::SKY) + " " +
-                            chip("FILES", C::AMBER) + " " + chip("WEB", C::PINK);
-        if (cols >= static_cast<int>(clean_len(chips))) {
-            out.push_back(center_pad_logo(cols, static_cast<int>(clean_len(chips))) + chips);
-        }
     }
 
     if (phrase && !phrase->empty()) {
@@ -662,16 +609,9 @@ void glow_text(const std::string& text, int cycles, double delay) {
 namespace {
 const std::vector<std::string> SPIN_FRAMES =
     {"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"};
-const std::vector<std::string> SPIN_PULSES = {
-    "charging context", "sampling tokens", "routing tools", "warming stream",
-    "arming tool calls", "reading context", "loading model", "locking in"};
-const int SPIN_PULSE_HOLD = 64;
-const int SPIN_PHRASE_HOLD = 50;
 }
 
-Spinner::Spinner(std::string msg) : msg_(std::move(msg)) {
-    current_pulse_ = random_choice(SPIN_PULSES);
-}
+Spinner::Spinner(std::string msg) : msg_(std::move(msg)) {}
 
 Spinner::~Spinner() {
     running_ = false;
@@ -679,11 +619,7 @@ Spinner::~Spinner() {
 }
 
 void Spinner::start() {
-    // Guard against double-start. std::thread's move-assignment calls
-    // std::terminate() if the destination still owns a joinable thread, so a
-    // second start() without an intervening stop() would abort the whole
-    // process (this happened on MPC stream retries, where the retry handler
-    // re-armed the spinner while the previous spin thread was still running).
+
     if (thread_.joinable()) {
         running_ = false;
         thread_.join();
@@ -701,58 +637,19 @@ void Spinner::spin() {
     using C = Colors;
     int i = 0;
     started_at_ = std::chrono::steady_clock::now();
-    std::optional<std::string> phrase = pick_logo_phrase();
-    bool two_line = phrase.has_value();
     while (running_) {
         double elapsed = std::chrono::duration<double>(
                              std::chrono::steady_clock::now() - started_at_).count();
         const std::string& frame = SPIN_FRAMES[static_cast<std::size_t>(i) % SPIN_FRAMES.size()];
-        int fshade = FLAIR_RAMP[static_cast<std::size_t>(i) % FLAIR_RAMP.size()];
-        int wave_pos = i % 8;
-        std::string bar;
-        for (int c = 0; c < 8; ++c) {
-            int dist = ((c - wave_pos) % 8 + 8) % 8;
-            if (dist <= 1) {
-                int shade = FLAIR_RAMP[static_cast<std::size_t>(i + c) % FLAIR_RAMP.size()];
-                bar += "\033[38;5;" + std::to_string(shade) + "m" + C::BOLD + "▰";
-            } else {
-                bar += std::string(C::DIM) + C::GRAY + "▱";
-            }
-        }
-        bar += C::RESET;
-        if (i && i % SPIN_PULSE_HOLD == 0) {
-            std::vector<std::string> choices;
-            for (const auto& p : SPIN_PULSES)
-                if (p != current_pulse_) choices.push_back(p);
-            if (choices.empty()) choices = SPIN_PULSES;
-            current_pulse_ = random_choice(choices);
-        }
-        std::string pulse = current_pulse_;
-
         char ebuf[16];
-        std::snprintf(ebuf, sizeof(ebuf), "%04.1f", elapsed);
+        std::snprintf(ebuf, sizeof(ebuf), "%.1f", elapsed);
         std::string line =
-            std::string(left_indent()) + "\033[38;5;" + std::to_string(fshade) + "m" + C::BOLD
-            + frame + C::RESET + " "
-            + bar + "  "
+            std::string(left_indent()) + ACCENT + C::BOLD + frame + C::RESET + " "
             + C::WHITE + msg_ + C::RESET + "  "
-            + C::DIM + C::GRAY + pulse + " · " + ebuf + "s" + C::RESET;
+            + C::DIM + C::GRAY + ebuf + "s" + C::RESET;
 
         if (live_active()) {
             live_set_status_line(line);
-        } else if (two_line) {
-            if (i && i % SPIN_PHRASE_HOLD == 0) {
-                auto np = pick_logo_phrase();
-                if (np) phrase = np;
-            }
-            int avail = std::max(8, term_cols() - LEFT_MARGIN - 2);
-            std::string ptext = (static_cast<int>(utf8_len(*phrase)) <= avail)
-                                    ? *phrase
-                                    : utf8_substr(*phrase, 0, avail - 1) + "…";
-            std::string phrase_line =
-                std::string(left_indent()) + C::DIM + C::ITALIC + ACCENT + ptext + C::RESET;
-            std::cout << "\r\033[2K" << line << "\n\033[2K" << phrase_line << "\033[1A\r";
-            std::cout.flush();
         } else {
             std::cout << "\r\033[2K" << line;
             std::cout.flush();
@@ -763,9 +660,6 @@ void Spinner::spin() {
     }
     if (live_active()) {
         live_set_status_line("");
-    } else if (two_line) {
-        std::cout << "\r\033[2K\n\033[2K\033[1A\r";
-        std::cout.flush();
     } else {
         std::cout << "\r\033[2K";
         std::cout.flush();

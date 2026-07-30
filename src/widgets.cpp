@@ -1,3 +1,5 @@
+// Interactive terminal widgets: menus, prompts, spinners and tables.
+
 #include "widgets.hpp"
 #include "ansi.hpp"
 #include "terminal.hpp"

@@ -1,3 +1,5 @@
+// Pseudo-terminal session singleton for the embedded terminal.
+
 #pragma once
 
 #include <cstddef>
@@ -29,4 +31,4 @@ PtySession& terminal_session();
 
 extern bool g_shared_terminal_active;
 
-}  // namespace ocli
+}

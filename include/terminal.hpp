@@ -1,3 +1,5 @@
+// Terminal mode, size and resize-handler API.
+
 #pragma once
 
 #include <string>

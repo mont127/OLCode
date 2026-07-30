@@ -1,3 +1,5 @@
+// macOS platform queries: Apple Silicon detection, RAM and VRAM limits.
+
 #include "secutil.hpp"
 
 #include <string>

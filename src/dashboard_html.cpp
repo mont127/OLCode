@@ -1,3 +1,5 @@
+// The dashboard web UI (HTML/CSS/JS) embedded as a C++ raw string literal.
+
 #include "dashboard.hpp"
 
 namespace ocli {
@@ -380,6 +382,56 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
   kbd{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;
     background:var(--panel-2);border:1px solid var(--hair-2);border-radius:5px;
     font-family:var(--mono);font-size:11px;color:var(--muted)}
+
+  /* ===================== model picker ===================== */
+  .model-btn{display:inline-flex;align-items:center;gap:7px;background:transparent;border:1px solid var(--hair-2);
+    color:var(--muted);font-size:12.5px;font-weight:550;padding:6px 9px 6px 10px;border-radius:var(--radius-sm);
+    white-space:nowrap;max-width:220px;
+    transition:color .15s var(--ease),border-color .15s var(--ease),background .15s var(--ease)}
+  .model-btn:hover{color:var(--text);border-color:rgba(63,224,138,.35);background:var(--elevated)}
+  .model-btn .mb-ico{display:inline-flex;color:var(--muted);flex:0 0 auto}
+  .model-btn:hover .mb-ico{color:var(--text)}
+  .model-btn .mb-ico svg{width:14px;height:14px}
+  .model-btn .mb-name{font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .model-btn .mb-caret{display:inline-flex;color:var(--faint);flex:0 0 auto}
+  .model-btn .mb-caret svg{width:13px;height:13px}
+
+  .model-list{display:flex;flex-direction:column;gap:2px;min-height:62px}
+  .model-opt{position:relative;display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+    padding:10px 12px;border:1px solid transparent;background:transparent;color:var(--text);border-radius:var(--radius-sm);
+    transition:background .12s var(--ease),border-color .12s var(--ease)}
+  .model-opt:hover{background:var(--panel-2)}
+  .model-opt.is-sel{background:var(--accent-dim);border-color:rgba(63,224,138,.16)}
+  .model-opt.is-sel::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:2px;background:var(--accent)}
+  .model-opt .mo-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-family:var(--mono);font-size:13px;color:var(--text)}
+  .model-opt .mo-mark{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--accent)}
+  .model-opt .mo-mark svg{width:16px;height:16px}
+  .model-loading,.model-empty{padding:14px 12px;color:var(--faint);font-size:13px;line-height:1.5}
+
+  .model-section{margin-top:10px;padding-top:10px;border-top:1px solid var(--hair)}
+  .model-section-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);padding:2px 12px 8px}
+  .mo-size{flex:0 0 auto;font-family:var(--mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .dl-row{display:flex;align-items:center;gap:11px;width:100%;padding:7px 12px;border-radius:var(--radius-sm)}
+  .dl-row .mo-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:13px;color:var(--text)}
+  .dl-btn{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;background:transparent;border:1px solid var(--hair-2);color:var(--muted);
+    font-size:12px;font-weight:550;padding:5px 11px;border-radius:var(--radius-sm);white-space:nowrap;
+    transition:color .15s var(--ease),border-color .15s var(--ease),background .15s var(--ease)}
+  .dl-btn:hover{color:var(--accent);border-color:rgba(63,224,138,.4);background:var(--accent-dim)}
+  .dl-btn svg{width:14px;height:14px}
+  .dl-btn:disabled{color:var(--faint);cursor:not-allowed;border-color:var(--hair);background:transparent}
+  .dl-progress{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;color:var(--muted);font-size:12px}
+  .dl-spin{width:13px;height:13px;border:2px solid var(--hair-2);border-top-color:var(--accent);border-radius:50%;
+    display:inline-block;animation:spin .7s linear infinite}
+  .model-opt-wrap{display:flex;align-items:stretch;gap:6px;width:100%}
+  .model-opt-wrap .model-opt{flex:1 1 auto;min-width:0}
+  .mo-del{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:36px;
+    background:transparent;border:1px solid transparent;border-radius:var(--radius-sm);color:var(--faint);cursor:pointer;
+    transition:color .12s var(--ease),border-color .12s var(--ease),background .12s var(--ease)}
+  .model-opt-wrap:hover .mo-del{border-color:var(--hair)}
+  .mo-del:hover{color:#ff6b6b;border-color:rgba(255,107,107,.4);background:rgba(255,107,107,.09)}
+  .mo-del svg{width:15px;height:15px}
+  .mo-del:disabled{opacity:.4;cursor:not-allowed;color:var(--faint);border-color:transparent;background:transparent}
 </style>
 </head>
 <body>
@@ -432,7 +484,7 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
     <section id="view-chat" class="view is-active" role="tabpanel" aria-labelledby="tabbtn-chat" tabindex="0">
       <header class="view-top">
         <div class="vt-left"><h1 class="vt-title">Chat</h1></div>
-        <div class="vt-right"><span class="work-pill" hidden><span class="dot"></span>Working</span></div>
+        <div class="vt-right"><span class="work-pill" hidden><span class="dot"></span>Working</span><button type="button" class="model-btn" aria-label="Select model" aria-haspopup="dialog"><span class="mb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l10 10-10 10L2 12z"/></svg></span><span class="mb-name">model</span><span class="mb-caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span></button></div>
       </header>
       <div class="conv-scroll" id="chatScroll"><div class="conv-col"><div id="chatList" class="msg-list"></div></div></div>
       <div class="composer-wrap"><div class="composer-col" id="chatComposerWrap"></div></div>
@@ -451,6 +503,7 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/></svg>
             <span>Change folder</span>
           </button>
+          <button type="button" class="model-btn" aria-label="Select model" aria-haspopup="dialog"><span class="mb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l10 10-10 10L2 12z"/></svg></span><span class="mb-name">model</span><span class="mb-caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span></button>
         </div>
       </header>
       <div class="ws-input-row" id="wsInputRow" hidden>
@@ -476,7 +529,7 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
     <section id="view-code" class="view" role="tabpanel" aria-labelledby="tabbtn-code" tabindex="0">
       <header class="view-top">
         <div class="vt-left"><h1 class="vt-title">Code</h1></div>
-        <div class="vt-right"><span class="work-pill" hidden><span class="dot"></span>Working</span></div>
+        <div class="vt-right"><span class="work-pill" hidden><span class="dot"></span>Working</span><button type="button" class="model-btn" aria-label="Select model" aria-haspopup="dialog"><span class="mb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l10 10-10 10L2 12z"/></svg></span><span class="mb-name">model</span><span class="mb-caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span></button></div>
       </header>
       <div class="code-split">
         <div class="code-left">
@@ -564,6 +617,22 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
   </div>
 </div>
 
+<!-- ===================== MODEL PICKER ===================== -->
+<div class="scrim" id="modelScrim" hidden>
+  <div class="modal" id="modelModal" role="dialog" aria-modal="true" aria-labelledby="modelTitle" tabindex="-1">
+    <div class="modal-head">
+      <h2 class="modal-title" id="modelTitle">Select model</h2>
+      <button type="button" class="modal-x" id="modelClose" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-help" id="modelHelp">Local models (ollama)</p>
+      <div class="model-list" id="modelList" role="listbox" aria-label="Available models"></div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
   "use strict";
@@ -587,7 +656,12 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
     gauge: svg('<path d="M12 14l4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>'),
     help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 0 1 4.5 1.5c0 1.6-2 2-2 3"/><path d="M12 17h.01"/>'),
     eye: svg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>'),
-    eyeOff: svg('<path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.6 6.6A13.5 13.5 0 0 0 2 12s3.5 7 10 7a9.1 9.1 0 0 0 5.4-1.61"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M2 2l20 20"/>')
+    eyeOff: svg('<path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.6 6.6A13.5 13.5 0 0 0 2 12s3.5 7 10 7a9.1 9.1 0 0 0 5.4-1.61"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M2 2l20 20"/>'),
+    diamond: svg('<path d="M12 2l10 10-10 10L2 12z"/>'),
+    chevronDown: svg('<path d="M6 9l6 6 6-6"/>'),
+    check: svg('<path d="M20 6L9 17l-5-5"/>'),
+    download: svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>'),
+    trash: svg('<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>')
   };
 
   /* ---------- shared conversation state ---------- */
@@ -882,20 +956,30 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
 
   /* ---------- upload (JSON contract: {filename, content_base64}) ---------- */
   function uploadAttachments(files){
-    if(!files || !files.length) return Promise.resolve();
+    if(!files || !files.length) return Promise.resolve([]);
     var jobs = files.map(function(f){
       return new Promise(function(resolve){
         var reader = new FileReader();
         reader.onload = function(){
           fetch('/api/upload', { method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ filename: f.name, content_base64: reader.result }) })
-            .then(function(){ resolve(); }, function(){ showToast('Upload failed: '+f.name, true); resolve(); });
+            .then(function(res){
+              /* fetch only rejects on network failure, so a 400/500 from /api/upload lands
+                 here as a success. Check status explicitly or upload errors stay invisible. */
+              return res.json().catch(function(){ return {}; }).then(function(j){
+                if(!res.ok){
+                  showToast('Upload failed: '+f.name+((j&&j.error)?' - '+j.error:' ('+res.status+')'), true);
+                  resolve(null); return;
+                }
+                resolve((j && j.path) ? j.path : null);
+              });
+            }, function(){ showToast('Upload failed: '+f.name, true); resolve(null); });
         };
-        reader.onerror = function(){ showToast('Could not read '+f.name, true); resolve(); };
+        reader.onerror = function(){ showToast('Could not read '+f.name, true); resolve(null); };
         reader.readAsDataURL(f);
       });
     });
-    return Promise.all(jobs);
+    return Promise.all(jobs).then(function(rs){ return rs.filter(Boolean); });
   }
 
   /* ---------- submit (preserves 202/409/error handling) ---------- */
@@ -909,20 +993,27 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
     if(cfg.requireWs && !state.workspace){ showToast('Choose a workspace folder first.', true); return; }
 
     var files = cs.files.slice();
-    var message = text;
-    if(files.length){ message += '\n\n[Attached: '+files.map(function(f){ return f.name; }).join(', ')+']'; }
+    var namesNote = files.length
+      ? '\n\n[Attached: '+files.map(function(f){ return f.name; }).join(', ')+']' : '';
 
-    var body = { message: message, web_search: cs.web, effort: cs.effort };
+    var body = { message: text + namesNote, web_search: cs.web, effort: cs.effort };
     if(cfg.sendWs && state.workspace){ body.workspace = state.workspace; }
 
     /* optimistic */
-    state.messages.push({ role:'user', content: message });
+    state.messages.push({ role:'user', content: text + namesNote });
     state.busy = true; state.status = 'working';
     ta.value=''; autoGrow(ta);
     cs.files = []; renderChips(prefix);
     updateBusyUI(); upsertCurrentChat();
 
-    uploadAttachments(files).then(function(){
+    uploadAttachments(files).then(function(paths){
+      /* The bubble shows bare filenames, but the agent needs the real on-disk paths the
+         upload handler wrote to, otherwise it tries to read a name relative to cwd and
+         the attachment looks like it silently did nothing. */
+      if(paths && paths.length){
+        body.message = text + '\n\nAttached files (already saved on disk, read them with read_file):\n'
+                     + paths.map(function(p){ return '- ' + p; }).join('\n');
+      }
       return fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
     }).then(function(res){
       if(res.status===202){
@@ -1177,15 +1268,17 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
     return String(u||'').replace(/^[a-z]+:\/\//i,'').split('/')[0] || 'server';
   }
   function renderConnStatus(){
-    var dot=$('sbConnDot'), txt=$('sbConnText');
+    var dot=$('sbConnDot'), txt=$('sbConnText'), row=$('sbConn');
     if(!dot || !txt) return;
+    var model = currentModelName();
     if(conn.connected){
       dot.className = 'conn-dot is-on';
-      txt.textContent = 'Connected · ' + connHost(conn.url);
+      txt.textContent = connHost(conn.url) + ' · ' + model;
     } else {
       dot.className = 'conn-dot';
-      txt.textContent = 'Local · ' + (conn.model || 'local');
+      txt.textContent = 'Local · ' + model;
     }
+    if(row) row.title = (conn.connected ? ('Connected to ' + connHost(conn.url)) : 'Local') + ' · model ' + (modelState.selected || model);
   }
   function refreshConn(){
     return apiGet('/api/connect').then(function(d){
@@ -1237,6 +1330,7 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
         if(r.ok && r.j && r.j.connected){
           conn.connected=true; conn.url=r.j.url||url; if(r.j.model) conn.model=r.j.model; conn.streaming=!!r.j.streaming;
           renderConnStatus();
+          refreshModel();
           closeModal();
           showToast('Connected to ' + connHost(conn.url));
         } else {
@@ -1255,6 +1349,7 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
         conn.connected=false; conn.url='';
         if(j && j.model) conn.model=j.model;
         renderConnStatus();
+        refreshModel();
         updateConnModalUI();
         setConnStatus('Disconnected.', false);
         showToast('Disconnected');
@@ -1313,7 +1408,8 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
       { icon:icon.folder, label:'Go to Space', hint:'⌘2', run:function(){ switchTab('space'); } },
       { icon:icon.code,   label:'Go to Code',  hint:'⌘3', run:function(){ switchTab('code'); } },
       { icon:icon.plus,   label:'New chat', run:function(){ newChat(); } },
-      { icon:icon.server, label:'Connect to server…', run:function(){ openConnect(); } }
+      { icon:icon.server, label:'Connect to server…', run:function(){ openConnect(); } },
+      { icon:icon.diamond, label:'Select model…', run:function(){ openModelPicker(); } }
     ];
     if(conn.connected){ list.push({ icon:icon.unplug, label:'Disconnect server', run:function(){ doDisconnect(); } }); }
     list.push({ icon:icon.globe, label:'Web search: On',  hint: cs.web?'active':'', run:function(){ setComposerWeb(tab, true); } });
@@ -1388,6 +1484,223 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
     $('cmdScrim').addEventListener('click', function(e){ if(e.target===this) closeModal(); });
   }
 
+  /* =========================================================
+     Feature C — Model picker (local ollama or connected server)
+     ========================================================= */
+  var modelState = { models: [], selected: '', source: 'local', downloads: [] };
+  var dlState = { active: false, model: '', poll: null };
+  function shortModel(name){
+    var s = String(name==null ? '' : name);
+    return s.replace(/:latest$/, '') || s;
+  }
+  function dlShortName(id){
+    var s = String(id==null ? '' : id);
+    var i = s.lastIndexOf(':');
+    return i >= 0 ? s.slice(i + 1) : s;
+  }
+  function currentModelName(){ return shortModel(modelState.selected) || conn.model || 'local'; }
+  function modelHelpText(){ return modelState.source === 'mpc' ? 'Models on the connected server' : 'Local models (ollama)'; }
+  function updateModelLabels(){
+    var label = shortModel(modelState.selected) || 'model';
+    var names = document.querySelectorAll('.model-btn .mb-name');
+    for(var i=0;i<names.length;i++){ names[i].textContent = label; }
+    var btns = document.querySelectorAll('.model-btn');
+    for(var j=0;j<btns.length;j++){ btns[j].setAttribute('title', 'Model: ' + (modelState.selected || label)); }
+  }
+  function refreshModel(){
+    return apiGet('/api/models').then(function(d){
+      if(d){
+        modelState.models = Array.isArray(d.models) ? d.models : [];
+        if(typeof d.selected === 'string') modelState.selected = d.selected;
+        if(d.source) modelState.source = d.source;
+        modelState.downloads = (modelState.source === 'local' && Array.isArray(d.downloads)) ? d.downloads : [];
+      }
+      updateModelLabels();
+      renderConnStatus();
+      return d;
+    }).catch(function(){ updateModelLabels(); });
+  }
+  function modelOptHTML(fullId, name, isSel, size, canDelete){
+    var opt = '<button type="button" class="model-opt'+(isSel?' is-sel':'')+'" role="option" '+
+      'aria-selected="'+(isSel?'true':'false')+'" data-model="'+escapeHtml(fullId)+'">'+
+      '<span class="mo-name" title="'+escapeHtml(fullId)+'">'+escapeHtml(name)+'</span>'+
+      (size ? '<span class="mo-size">'+escapeHtml(size)+'</span>' : '')+
+      '<span class="mo-mark">'+(isSel?icon.check:'')+'</span></button>';
+    if(!canDelete) return opt;
+    return '<div class="model-opt-wrap">'+opt+
+      '<button type="button" class="mo-del" data-uninstall="'+escapeHtml(fullId)+'" '+
+      'title="Uninstall '+escapeHtml(name)+'" aria-label="Uninstall '+escapeHtml(name)+'">'+icon.trash+'</button></div>';
+  }
+  function dlRowHTML(id, name, size){
+    var isThis = dlState.active && dlState.model && (dlState.model === id || dlShortName(dlState.model) === name);
+    var right;
+    if(isThis){
+      right = '<span class="dl-progress"><span class="dl-spin"></span><span>Downloading&hellip;</span></span>';
+    } else {
+      right = '<button type="button" class="dl-btn" data-download="'+escapeHtml(id)+'"'+(dlState.active?' disabled':'')+'>'+
+        icon.download+'<span>Download</span></button>';
+    }
+    return '<div class="dl-row" data-dl-id="'+escapeHtml(id)+'">'+
+      '<span class="mo-name" title="'+escapeHtml(id)+'">'+escapeHtml(name)+'</span>'+
+      (size ? '<span class="mo-size">'+escapeHtml(size)+'</span>' : '')+
+      right+'</div>';
+  }
+  function renderModelList(loading){
+    var box = $('modelList'); if(!box) return;
+    if(loading){ box.innerHTML = '<div class="model-loading">Loading models&hellip;</div>'; return; }
+    var models = modelState.models;
+    var downloads = (modelState.source === 'local' && Array.isArray(modelState.downloads)) ? modelState.downloads : [];
+    if(!models.length && !downloads.length){ box.innerHTML = '<div class="model-empty">No models found — is ollama running, or connect to a server?</div>'; return; }
+    var local = (modelState.source === 'local');
+    var sel = shortModel(modelState.selected), html='';
+    for(var i=0;i<models.length;i++){
+      var full = models[i];
+      html += modelOptHTML(full, shortModel(full), shortModel(full) === sel, '', local);
+    }
+    if(downloads.length){
+      html += '<div class="model-section"><div class="model-section-label">Download more</div>';
+      for(var k=0;k<downloads.length;k++){
+        var d = downloads[k] || {};
+        var id = d.model || '', nm = dlShortName(id), size = d.size || '';
+        if(d.installed){ html += modelOptHTML(id, nm, shortModel(id) === sel, size, true); }
+        else { html += dlRowHTML(id, nm, size); }
+      }
+      html += '</div>';
+    }
+    box.innerHTML = html;
+  }
+  function focusSelectedModelRow(){
+    var box=$('modelList'); if(!box) return;
+    var sel = box.querySelector('.model-opt.is-sel') || box.querySelector('.model-opt');
+    if(sel){ try{ sel.focus(); }catch(e){} }
+  }
+  function modelModalOpen(){ return !!(activeModal && activeModal.scrim === $('modelScrim')); }
+  function openModelPicker(){
+    if(state.busy){ showToast('Finish the current turn first.', true); return; }
+    $('modelHelp').textContent = modelHelpText();
+    renderModelList(true);
+    openModal($('modelScrim'), $('modelModal'), $('modelModal'), null);
+    refreshModel().then(function(){
+      if(!modelModalOpen()) return;
+      $('modelHelp').textContent = modelHelpText();
+      renderModelList(false);
+      focusSelectedModelRow();
+    });
+  }
+  function selectModel(full){
+    if(!full) return;
+    if(state.busy){ showToast('Finish the current turn first.', true); return; }
+    fetch('/api/model', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ model: full }) })
+      .then(function(res){ return res.json().catch(function(){ return {}; }).then(function(j){ return { ok:res.ok, status:res.status, j:j }; }); })
+      .then(function(r){
+        if(r.ok && r.j && r.j.selected){
+          modelState.selected = r.j.selected;
+          if(r.j.source) modelState.source = r.j.source;
+          updateModelLabels();
+          renderConnStatus();
+          closeModal();
+          showToast('Model set to ' + shortModel(modelState.selected));
+        } else {
+          showToast((r.j && r.j.error) ? r.j.error : ('Could not set model (' + r.status + ')'), true);
+        }
+      })
+      .catch(function(){ showToast('Network error — could not set model.', true); });
+  }
+  function uninstallModel(full){
+    if(!full) return;
+    if(state.busy){ showToast('Finish the current turn first.', true); return; }
+    if(dlState.active){ showToast('Finish the current download first.', true); return; }
+    var name = shortModel(full) || full;
+    if(!window.confirm('Remove ' + name + ' from this machine?\n\nThis deletes the downloaded model files (ollama rm).')) return;
+    fetch('/api/uninstall', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ model: full }) })
+      .then(function(res){ return res.json().catch(function(){ return {}; }).then(function(j){ return { ok:res.ok, status:res.status, j:j }; }); })
+      .then(function(r){
+        if(r.ok && r.j && r.j.removed){
+          if(r.j.selected){ modelState.selected = r.j.selected; updateModelLabels(); renderConnStatus(); }
+          showToast('Removed ' + name);
+          refreshModel().then(function(){ if(modelModalOpen()) renderModelList(false); });
+        } else {
+          showToast((r.j && r.j.error) ? r.j.error : ('Could not remove model (' + r.status + ')'), true);
+        }
+      })
+      .catch(function(){ showToast('Network error — could not remove model.', true); });
+  }
+  function stopDownloadPoll(){ if(dlState.poll){ clearInterval(dlState.poll); dlState.poll = null; } }
+  function startDownloadPoll(){ stopDownloadPoll(); dlState.poll = setInterval(pollDownload, 1500); pollDownload(); }
+  function pollDownload(){
+    apiGet('/api/download_status').then(function(s){
+      if(!s) return;
+      var status = s.status || '';
+      if(s.model) dlState.model = s.model;
+      if(status === 'done'){
+        stopDownloadPoll();
+        var done = dlState.model;
+        dlState.active = false; dlState.model = '';
+        showToast('Downloaded ' + dlShortName(done));
+        refreshModel().then(function(){ if(modelModalOpen()) renderModelList(false); });
+      } else if(status === 'error'){
+        stopDownloadPoll();
+        dlState.active = false; dlState.model = '';
+        showToast(s.error ? String(s.error) : 'Download failed.', true);
+        if(modelModalOpen()) renderModelList(false);
+      } else {
+        dlState.active = !!s.active || status === 'downloading';
+        if(!dlState.active){ stopDownloadPoll(); if(modelModalOpen()) renderModelList(false); }
+      }
+    }).catch(function(){});
+  }
+  function startDownload(fullId){
+    if(!fullId) return;
+    if(dlState.active){ showToast('A download is already running.', true); return; }
+    fetch('/api/download', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ model: fullId }) })
+      .then(function(res){ return res.json().catch(function(){ return {}; }).then(function(j){ return { ok:res.ok, status:res.status, j:j }; }); })
+      .then(function(r){
+        if(r.status === 409){
+          showToast('A download is already running.', true);
+          if(!dlState.active){ dlState.active = true; dlState.model = (r.j && r.j.model) || fullId; if(modelModalOpen()) renderModelList(false); startDownloadPoll(); }
+          return;
+        }
+        if(r.ok){
+          dlState.active = true; dlState.model = (r.j && r.j.model) || fullId;
+          if(modelModalOpen()) renderModelList(false);
+          startDownloadPoll();
+        } else {
+          showToast((r.j && r.j.error) ? r.j.error : ('Could not start download (' + r.status + ')'), true);
+        }
+      })
+      .catch(function(){ showToast('Network error — could not start download.', true); });
+  }
+  function resumeDownload(){
+    apiGet('/api/download_status').then(function(s){
+      if(s && (s.active || s.status === 'downloading')){ dlState.active = true; dlState.model = s.model || ''; startDownloadPoll(); }
+    }).catch(function(){});
+  }
+  function onModelListKey(e){
+    if(e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    var opts = Array.prototype.slice.call($('modelList').querySelectorAll('.model-opt'));
+    if(!opts.length) return;
+    e.preventDefault();
+    var idx = opts.indexOf(document.activeElement);
+    if(e.key === 'ArrowDown'){ idx = (idx < 0) ? 0 : Math.min(idx + 1, opts.length - 1); }
+    else { idx = (idx <= 0) ? 0 : idx - 1; }
+    opts[idx].focus();
+  }
+  function wireModel(){
+    var btns = document.querySelectorAll('.model-btn');
+    for(var i=0;i<btns.length;i++){ btns[i].addEventListener('click', openModelPicker); }
+    $('modelClose').addEventListener('click', closeModal);
+    $('modelList').addEventListener('click', function(e){
+      var del = e.target.closest('.mo-del');
+      if(del){ if(!del.disabled) uninstallModel(del.getAttribute('data-uninstall')); return; }
+      var dl = e.target.closest('.dl-btn');
+      if(dl){ if(!dl.disabled) startDownload(dl.getAttribute('data-download')); return; }
+      var opt = e.target.closest('.model-opt'); if(!opt) return;
+      selectModel(opt.getAttribute('data-model'));
+    });
+    $('modelModal').addEventListener('keydown', function(e){ trapTab(e, this); onModelListKey(e); });
+    $('modelScrim').addEventListener('click', function(e){ if(e.target===this) closeModal(); });
+  }
+
   /* ---------- global overlay shortcuts (Cmd/Ctrl+K, Esc) ---------- */
   function wireOverlays(){
     document.addEventListener('keydown', function(e){
@@ -1410,9 +1723,9 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
     $('codeComposerWrap').innerHTML = composerHTML('code');
     VIEWS.forEach(wireComposer);
     wireTabs(); wireWorkspace(); wireSidebar();
-    wireConnect(); wireHelp(); wirePalette(); wireOverlays();
+    wireConnect(); wireHelp(); wirePalette(); wireModel(); wireOverlays();
     applyWorkspaceUI(); renderSidebar();
-    renderConnStatus(); refreshConn();
+    renderConnStatus(); refreshConn(); refreshModel(); resumeDownload();
     refreshHistory().then(function(){ if(state.busy) startPolling(); });
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
@@ -1422,4 +1735,4 @@ const char* DASHBOARD_HTML = R"DASH(<!DOCTYPE html>
 </html>
 )DASH";
 
-}  // namespace ocli
+}

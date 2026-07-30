@@ -1,3 +1,5 @@
+// Executable path discovery, self-install and backend/model matching rules.
+
 #include "secutil.hpp"
 #include "ansi.hpp"
 #include "render.hpp"
@@ -12,7 +14,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #if defined(__APPLE__)
-#include <mach-o/dyld.h>   // _NSGetExecutablePath
+#include <mach-o/dyld.h>
 #endif
 
 namespace ocli {
@@ -71,7 +73,7 @@ std::string current_executable_path() {
     }
     if (auto pos = buf.find('\0'); pos != std::string::npos) buf.resize(pos);
 #else
-    // Linux: the running binary is /proc/self/exe.
+
     std::string buf(4096, '\0');
     ssize_t n = ::readlink("/proc/self/exe", buf.data(), buf.size());
     if (n <= 0) return std::string();
@@ -273,8 +275,8 @@ bool model_matches_backend(const std::string& model, const std::string& backend)
 
     return !starts_with_any(lowered, {"claude", "gpt-", "o1", "o3", "o4"}) &&
            !starts_with(model, "mlx-community/") &&
-           !contains(lowered, "gguf") &&
-           !ends_with(lowered, ".gguf");
+           !ends_with(lowered, ".gguf") &&
+           !starts_with_any(model, {"/", ".", "~"});
 }
 
 bool is_large_mlx_model(const std::string& model) {

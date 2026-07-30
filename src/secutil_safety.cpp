@@ -1,3 +1,5 @@
+// Command safety gates: dangerous-pattern matching and the offensive-tool policy.
+
 #include "secutil.hpp"
 #include "ansi.hpp"
 

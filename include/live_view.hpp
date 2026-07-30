@@ -1,3 +1,5 @@
+// Live status view API used during a turn.
+
 #pragma once
 
 #include <functional>
@@ -12,7 +14,6 @@ std::string live_read_line(const std::vector<std::string>* history);
 
 void live_end();
 
-// Best-effort terminal restore for crash/terminate paths (no thread joins).
 void live_emergency_restore();
 
 bool live_active();

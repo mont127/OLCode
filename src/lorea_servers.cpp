@@ -1,3 +1,5 @@
+// Starts and health-checks local inference servers (ollama, MLX, llama.cpp).
+
 #include "lorea.hpp"
 
 #include <string>
@@ -186,7 +188,12 @@ void LOREA::ensure_mlx_server() {
     }
 
     log_info("Auto-starting MLX Server with model: " + model_name);
-    std::vector<std::string> cmd = {sys_executable(), "-m", "mlx_lm.server", "--model", model_name};
+    // Default --prompt-cache-size is 10 distinct cached sequences; on a large local model with
+    // long system prompts each one can be a large fraction of a GB, and Metal aborts hard on
+    // OOM instead of degrading gracefully. Cap retention so a long multi-round conversation
+    // doesn't accumulate cache faster than turns evict it.
+    std::vector<std::string> cmd = {sys_executable(), "-m", "mlx_lm.server", "--model", model_name,
+                                    "--prompt-cache-size", "2"};
     try {
         server_process = spawn_process(cmd, true);
         log_info("Waiting for MLX server to initialize...");
@@ -210,6 +217,20 @@ std::optional<std::string> LOREA::find_llama_server_bin() {
     if (envbin && *envbin && fs::is_regular_file(envbin, ec) && ::access(envbin, X_OK) == 0) {
         return std::string(envbin);
     }
+    // Checked BEFORE `which`, deliberately. The Homebrew llama-server is usually older and
+    // cannot load LOREA-cyber v5.8: it recognises the qwen35moe architecture name but reads
+    // layer 40 as an SSM block and dies with "missing tensor 'blk.40.ssm_conv1d.weight'".
+    // These are current builds that do load it.
+    const std::vector<std::string> preferred = {
+        "/Volumes/ASAFE/gguf-work/llama.cpp/build/bin/llama-server",
+        expanduser("~/llama.cpp/build/bin/llama-server"),
+    };
+    for (const std::string& c : preferred) {
+        if (!c.empty() && fs::is_regular_file(c, ec) && ::access(c.c_str(), X_OK) == 0) {
+            return c;
+        }
+    }
+
     try {
         ProcResult r = run_subprocess({"which", "llama-server"}, "", 5.0, false);
         std::string out = strip(r.out);
@@ -217,7 +238,7 @@ std::optional<std::string> LOREA::find_llama_server_bin() {
             return out;
         }
     } catch (...) {}
-    
+
     std::vector<std::string> cands = {
         "/opt/homebrew/bin/llama-server",
         "/usr/local/bin/llama-server",

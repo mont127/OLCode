@@ -1,3 +1,5 @@
+// Shared utilities: paths, string helpers, effort levels and backend defaults.
+
 #include "secutil.hpp"
 #include "ansi.hpp"
 
@@ -61,22 +63,37 @@ std::string last_segment(const std::string& s) {
     return (p == std::string::npos) ? s : s.substr(p + 1);
 }
 
+// Newest first. v5.8/v5.5 live under ~/loreacyber-ft; the older 30B builds were in ~/lorea-ft,
+// which no longer exists on this machine (every check below it fails and we fell through to a
+// dead path, which is why /model offered a directory that could not be loaded).
+const std::string CYBER_V58 = expanduser("~/loreacyber-ft/LOREA-cyber-v5.8");
+const std::string CYBER_V55 = expanduser("~/loreacyber-ft/LOREA-cyber-v5.5");
 const std::string CYBER_V51 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v5-1");
 const std::string CYBER_V42 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v4-2");
 const std::string CYBER_V41 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v4-1");
 const std::string CYBER_V3  = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v3");
 const std::string LOREA_CYBER_DIR =
-      path_is_dir(CYBER_V51) ? CYBER_V51
+      path_is_dir(CYBER_V58) ? CYBER_V58
+    : path_is_dir(CYBER_V55) ? CYBER_V55
+    : path_is_dir(CYBER_V51) ? CYBER_V51
     : path_is_dir(CYBER_V42) ? CYBER_V42
     : path_is_dir(CYBER_V41) ? CYBER_V41
     : path_is_dir(CYBER_V3)  ? CYBER_V3
     : expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber");
 
+// v5.8, merged into the bf16 base and quantised once (not a re-quantise of the 4-bit MLX
+// build). 21.7 GB, so it lives on the external volume - the internal disk has no room for
+// it. path_is_file() falls through to the older builds if ASAFE is not mounted.
+const std::string CYBER_GGUF_V58_LOCAL = expanduser("~/models/LOREA-cyber-v5.8-Q4_K_M.gguf");
+const std::string CYBER_GGUF_V58_SSD   =
+    "/Volumes/ASAFE/gguf-work/LOREA-cyber-v5.8-Q4_K_M-named.gguf";
 const std::string CYBER_GGUF_V42_LOCAL = expanduser("~/lorea-ft/lorea-cyber-v42-q4_k_m.gguf");
 const std::string CYBER_GGUF_V42_SSD   = "/Volumes/ASAFE/lorea-v42-gguf/lorea-cyber-v42-q4_k_m.gguf";
 const std::string CYBER_GGUF_V41_LOCAL = expanduser("~/lorea-ft/lorea-cyber-v41-q4_k_m.gguf");
 const std::string LOREA_CYBER_GGUF =
-      path_is_file(CYBER_GGUF_V42_LOCAL) ? CYBER_GGUF_V42_LOCAL
+      path_is_file(CYBER_GGUF_V58_LOCAL) ? CYBER_GGUF_V58_LOCAL
+    : path_is_file(CYBER_GGUF_V58_SSD)   ? CYBER_GGUF_V58_SSD
+    : path_is_file(CYBER_GGUF_V42_LOCAL) ? CYBER_GGUF_V42_LOCAL
     : path_is_file(CYBER_GGUF_V42_SSD)   ? CYBER_GGUF_V42_SSD
     : path_is_file(CYBER_GGUF_V41_LOCAL) ? CYBER_GGUF_V41_LOCAL
     : CYBER_GGUF_V42_LOCAL;
@@ -84,7 +101,8 @@ const std::string LOREA_CYBER_GGUF =
 const std::string QWYTHOS_GGUF =
     expanduser("~/models/Qwythos-9B-Claude-Mythos-5-1M-Q4_K_M.gguf");
 
-const std::string LOREA_DIR = expanduser("~/lorea-ft/lorea-coder-30b-a3b-v3-re");
+const std::string LOREA_RE_V3 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-v3-re");
+const std::string LOREA_DIR = path_is_dir(LOREA_RE_V3) ? LOREA_RE_V3 : LOREA_CYBER_DIR;
 
 const std::vector<std::string> OPENAI_API_MODELS = {
     "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
@@ -106,8 +124,11 @@ const std::vector<std::string> OLLAMA_MODELS = {
     "bge-m3", "all-minilm", "snowflake-arctic-embed", "qwen3-embedding", "llava", "bakllava",
     "moondream", "minicpm-v", "llama3.2-vision",
 };
-const std::vector<std::string> MLX_MODELS = {
-    LOREA_DIR, LOREA_CYBER_DIR,
+// Local dirs first; entries that are absolute paths are dropped when they do not exist, so
+// /model never offers a directory that cannot be loaded.
+const std::vector<std::string> MLX_MODELS = []() {
+    std::vector<std::string> all = {
+    LOREA_CYBER_DIR, LOREA_DIR,
     "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
     "mlx-community/Qwen3.5-2B-OptiQ-4bit",
     "mlx-community/Qwen3.5-4B-OptiQ-4bit",
@@ -136,8 +157,20 @@ const std::vector<std::string> MLX_MODELS = {
     "mlx-community/GLM-4.5-Air-nvfp4",
     "mlx-community/DeepSeek-V4-Flash-4bit",
     "mlx-community/DeepSeek-V4-Flash-2bit-DQ",
-};
-const std::vector<std::string> GGUF_MODELS = {
+    };
+    std::vector<std::string> out;
+    for (const auto& m : all) {
+        if (!m.empty() && m[0] == '/' && !path_is_dir(m)) continue;   // local path that is gone
+        if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
+    }
+    return out;
+}();
+const std::vector<std::string> GGUF_MODELS = []() {
+    std::vector<std::string> all = {
+    // The local v5.8 build heads the list when it is actually present; the entry is dropped
+    // if the external volume is unmounted, the same way MLX_MODELS filters dead paths.
+    LOREA_CYBER_GGUF,
+    "MK4-Research/LOREA-cyber-v5.8",
     "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", "bartowski/Llama-3.1-8B-Instruct-GGUF",
     "bartowski/Llama-3.2-3B-Instruct-GGUF", "bartowski/Llama-3.3-70B-Instruct-GGUF",
     "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF", "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF",
@@ -155,7 +188,14 @@ const std::vector<std::string> GGUF_MODELS = {
     "kai-os/Carnice-V2-27b-GGUF", "AtomicChat/gemma-4-26B-A4B-it-assistant-GGUF",
     "LiquidAI/LFM2.5-1.2B-Thinking-GGUF", "LiquidAI/LFM2-24B-A2B-GGUF",
     "prism-ml/Bonsai-8B-gguf", "jgebbeken/gemma-4-coder-gguf", "qvac/MedPsy-4B-GGUF",
-};
+    };
+    std::vector<std::string> out;
+    for (const auto& m : all) {
+        if (!m.empty() && m[0] == '/' && !path_is_file(m)) continue;   // drop dead local paths
+        if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
+    }
+    return out;
+}();
 const std::vector<std::string> AIRLLM_MODELS = {
     "Qwen/Qwen2.5-72B-Instruct", "Qwen/Qwen2.5-Coder-32B-Instruct", "Qwen/Qwen2.5-7B-Instruct",
     "meta-llama/Llama-3.1-70B-Instruct", "meta-llama/Llama-3.1-405B-Instruct",
@@ -184,7 +224,8 @@ const std::map<std::string, std::string> BACKEND_DEFAULT_URLS = {
 
 const std::map<std::string, std::string> BACKEND_DEFAULT_MODELS = {
     {"ollama",    path_is_file(QWYTHOS_GGUF) ? "qwythos" : "qwen3.6:27b-coding-nvfp4"},
-    {"llama-cpp", path_is_file(QWYTHOS_GGUF) ? QWYTHOS_GGUF : LOREA_CYBER_GGUF},
+    // LOREA-cyber first: it is the current model. Qwythos is only the fallback now.
+    {"llama-cpp", path_is_file(LOREA_CYBER_GGUF) ? LOREA_CYBER_GGUF : QWYTHOS_GGUF},
     {"mlx",       LOREA_CYBER_DIR},
     {"airllm",    "Qwen/Qwen2.5-72B-Instruct"},
     {"openai",    "gpt-4o"},
@@ -239,43 +280,44 @@ const std::string ADVR_LOOP =
 
 const std::map<std::string, EffortLevel>& effort_levels() {
     static const std::map<std::string, EffortLevel> levels = {
+        // The `think` flag is the real control - it decides whether the chat template opens a
+        // reasoning block at all. The directive text then sets how long to spend in it.
         {"basic", {"Basic", Colors::GREEN,
-            "Effort level: BASIC. Answer directly and efficiently. Use tools only when "
-            "needed and keep it focused — don't over-investigate. Keep any thinking brief: "
-            "at most a sentence or two of reasoning before you answer."}},
+            "Effort level: BASIC. Do not reason before answering — no thinking block, no "
+            "preamble. Read the question, answer it directly. Use tools only when you cannot "
+            "answer without them, and keep the answer short.", false}},
         {"tuned", {"Tuned", Colors::CYAN,
-            "Effort level: TUNED. Put in solid effort: investigate a step deeper than the "
-            "obvious, check the relevant code paths, and back every conclusion with "
-            "specific evidence before you answer. Before answering, think it through "
-            "step by step inside <thought>...</thought> — outline the approach and the key "
-            "steps first, then give the answer."}},
+            "Effort level: TUNED. Think before you answer, but keep it SHORT — a few lines at "
+            "most. Note the approach and anything that looks off, then answer. Do not "
+            "enumerate alternatives or re-check work you have already done; if the answer is "
+            "obvious, say it. Investigate one step past the obvious, and back conclusions with "
+            "specific evidence.", true}},
         {"elite", {"Elite", Colors::YELLOW,
-            "Effort level: ELITE. Put in HIGH effort: be systematic and thorough. Trace "
-            "data flows from every input source to every sink, search multiple files and "
-            "patterns, weigh edge cases and non-obvious vectors, and verify each claim "
-            "against the actual evidence. Think at length FIRST inside <thought>...</thought>: "
-            "lay out the full approach, work through each step, question your assumptions, "
-            "and check your logic before you conclude. Do not answer until you have genuinely "
-            "reasoned it out."}},
+            "Effort level: ELITE. Think at MEDIUM length before answering: lay out the "
+            "approach, work through the main steps, and check the reasoning that actually "
+            "matters — but stop once the path is clear rather than exploring every branch. "
+            "Be systematic: trace data flows from input to sink, search the relevant files "
+            "and patterns, and weigh the edge cases that plausibly apply.", true}},
         {"mythic", {"Mythic", Colors::VIOLET,
-            "Effort level: MYTHIC — MAXIMUM effort, hold nothing back. Think EXTENSIVELY "
-            "inside <thought>...</thought> before answering: enumerate multiple approaches, "
-            "reason through each one, consider alternatives, counter-examples and edge cases, "
-            "and self-critique your reasoning before committing. Exhaustively analyze the "
-            "target: every relevant code path, every input that reaches every sink, all "
-            "related files, every plausible vector. Verify each finding against reality — "
-            "never assume. Do NOT stop early or say 'I'm done' until the task is fully and "
-            "verifiably complete; if one approach is exhausted, try another. Spend real "
-            "deliberation — the deeper you think, the better."}},
+            "Effort level: MYTHIC. Think at LENGTH before answering, and VERIFY EVERY CLAIM. "
+            "Treat each statement you are about to make as a hypothesis: state it, then "
+            "identify what evidence would confirm or refute it, then actually go and check "
+            "that evidence rather than assuming. If you cannot verify something, say so "
+            "explicitly instead of asserting it. Enumerate multiple approaches, reason "
+            "through each, consider counter-examples, and self-critique before committing. "
+            "Exhaustively cover the target: every relevant code path, every input reaching "
+            "every sink, all related files. Do not stop early — if one approach is "
+            "exhausted, try another.", true}},
         {"beyond", {"GO BEYOND", Colors::AMBER,
-            "Effort level: GO BEYOND — transcend the task. Everything in MYTHIC applies, and "
-            "you deliberate to the ABSOLUTE MAXIMUM inside <thought>...</thought>: reason "
-            "through everything from multiple angles, red-team your own conclusions, ask what "
-            "could be wrong and check it, and refine your thinking to exhaustion before you "
-            "answer. Then go FURTHER in the answer: anticipate what the user needs next, "
-            "surface risks they didn't ask about, and deliver the fix AND the hardening AND "
-            "the detection. Cross-check every claim twice. Never settle, never stop short, "
-            "and never call it done while anything remains to strengthen."}},
+            "Effort level: GO BEYOND. Overthink this — deliberately. Everything in MYTHIC "
+            "applies, then keep going well past the point where you feel finished. Reason "
+            "from multiple angles, red-team your own conclusions, ask what would have to be "
+            "true for you to be wrong and go check it, then question the check. Cross-check "
+            "every claim twice, by two different routes where possible. Doubt your first "
+            "answer and try to break it before you give it. Then go further in the answer "
+            "itself: anticipate what is needed next, surface risks that were not asked "
+            "about, and deliver the fix AND the hardening AND the detection. Never settle "
+            "while anything remains to strengthen.", true}},
     };
     return levels;
 }

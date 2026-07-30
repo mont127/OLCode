@@ -1,3 +1,5 @@
+// libcurl-backed HTTP client: requests, responses and header lookup.
+
 #include "http.hpp"
 
 #include <curl/curl.h>

@@ -1,3 +1,5 @@
+// HTTP server behind `ocli --app`: routes the dashboard REST API (chat, models, downloads, terminal stream).
+
 #include "dashboard.hpp"
 #include "lorea.hpp"
 #include "render.hpp"
@@ -367,8 +369,7 @@ void handle_chat(LOREA& agent, int fd, const std::string& body) {
             if (response_text.empty()) response_text = "The agent did not produce a response.";
             agent.messages.push_back(json{{"role", "assistant"}, {"content", response_text}});
             display_messages = dashboard_messages_from_agent(agent);
-            // Attach the agent's work trace to the last assistant message (display-only,
-            // not fed back into the model context) so LOREA Code can surface its activity.
+
             if (!log_text.empty() && display_messages.is_array()) {
                 std::string act = log_text;
                 if (act.size() > 40000) act = act.substr(act.size() - 40000);
@@ -432,8 +433,6 @@ bool base64_decode(const std::string& in, std::string& out) {
     return true;
 }
 
-// POST /api/upload  {"filename":"...", "content_base64":"..."}  (data: URL also accepted)
-// Saves into <cwd>/uploads/<basename> and returns {"path","size"}.
 void handle_upload(int fd, const std::string& body) {
     json req;
     if (!parse_json_body(body, req)) {
@@ -448,7 +447,7 @@ void handle_upload(int fd, const std::string& body) {
         send_json(fd, 400, json{{"error", "missing filename or content_base64"}});
         return;
     }
-    filename = std::filesystem::path(filename).filename().string();  // strip path traversal
+    filename = std::filesystem::path(filename).filename().string();
     if (filename.empty() || filename == "." || filename == "..") {
         send_json(fd, 400, json{{"error", "invalid filename"}});
         return;
@@ -462,7 +461,7 @@ void handle_upload(int fd, const std::string& body) {
     namespace fs = std::filesystem;
     std::string saved;
     {
-        std::lock_guard<std::mutex> lk(g_agent_mutex);   // pin cwd against a running turn
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
         std::error_code ec;
         fs::path dir = fs::current_path(ec) / "uploads";
         fs::create_directories(dir, ec);
@@ -481,7 +480,6 @@ void handle_upload(int fd, const std::string& body) {
     send_json(fd, 200, json{{"path", saved}, {"size", bytes.size()}});
 }
 
-// GET /api/workspace -> {"workspace": <process cwd>}
 void handle_get_workspace(int fd) {
     std::string cwd;
     {
@@ -493,8 +491,6 @@ void handle_get_workspace(int fd) {
     send_json(fd, 200, json{{"workspace", cwd}});
 }
 
-// POST /api/workspace  {"path":"..."} -> chdir the dashboard process + sync the shared shell.
-// Subsequently spawned agent-worker turns inherit this cwd, so they operate in the workspace.
 void handle_set_workspace(int fd, const std::string& body) {
     json req;
     if (!parse_json_body(body, req)) {
@@ -526,12 +522,11 @@ void handle_set_workspace(int fd, const std::string& body) {
     send_json(fd, 200, json{{"workspace", resolved}});
 }
 
-// POST /api/new_chat -> reset the conversation to just the system prompt.
 void handle_new_chat(LOREA& agent, int fd) {
     {
         std::lock_guard<std::mutex> lk(g_agent_mutex);
         if (!agent.messages.empty()) {
-            json system0 = agent.messages.front();   // preserve the system prompt
+            json system0 = agent.messages.front();
             agent.messages.clear();
             agent.messages.push_back(system0);
         }
@@ -545,8 +540,6 @@ void handle_new_chat(LOREA& agent, int fd) {
     send_json(fd, 200, json{{"ok", true}});
 }
 
-// POST /api/load_chat {"messages":[{role,content}...]} -> replace the conversation
-// (used to restore a past chat from the client-side history).
 void handle_load_chat(LOREA& agent, int fd, const std::string& body) {
     json req;
     if (!parse_json_body(body, req)) { send_json(fd, 400, json{{"error", "invalid json body"}}); return; }
@@ -575,7 +568,6 @@ void handle_load_chat(LOREA& agent, int fd, const std::string& body) {
     send_json(fd, 200, json{{"ok", true}, {"count", restored.size()}});
 }
 
-// GET /api/connect -> current MPC connection status.
 void handle_get_connect(LOREA& agent, int fd) {
     bool connected = agent.mpc_url.has_value() && !agent.mpc_url->empty();
     send_json(fd, 200, json{
@@ -585,7 +577,6 @@ void handle_get_connect(LOREA& agent, int fd) {
         {"streaming", connected ? agent.mpc_supports("streaming") : false}});
 }
 
-// POST /api/connect {"url","token"} -> connect to an MPC server and persist it.
 void handle_connect(LOREA& agent, int fd, const std::string& body) {
     json req;
     if (!parse_json_body(body, req)) { send_json(fd, 400, json{{"error", "invalid json body"}}); return; }
@@ -608,13 +599,155 @@ void handle_connect(LOREA& agent, int fd, const std::string& body) {
         {"streaming", agent.mpc_supports("streaming")}});
 }
 
-// POST /api/disconnect -> drop the MPC connection and clear the saved file.
 void handle_disconnect(LOREA& agent, int fd) {
     {
         std::lock_guard<std::mutex> lk(g_agent_mutex);
         agent.disconnect_mpc();
     }
     send_json(fd, 200, json{{"connected", false}, {"model", agent.model_name}});
+}
+
+struct QuantEntry { const char* model; const char* size; };
+const std::vector<QuantEntry> QWYTHOS_QUANTS = {
+    {"richardyoung/qwythos-9b-abliterated:IQ3_M",  "4.4 GB"},
+    {"richardyoung/qwythos-9b-abliterated:IQ4_XS", "5.2 GB"},
+    {"richardyoung/qwythos-9b-abliterated:Q4_K_M", "5.6 GB"},
+    {"richardyoung/qwythos-9b-abliterated:Q5_K_M", "6.5 GB"},
+    {"richardyoung/qwythos-9b-abliterated:Q8_0",   "9.5 GB"},
+};
+
+struct DownloadState {
+    std::mutex  m;
+    std::string model;
+    std::string status = "idle";
+    std::string error;
+    bool        active = false;
+};
+DownloadState g_dl;
+
+void handle_get_models(LOREA& agent, int fd) {
+    bool connected = agent.mpc_url.has_value() && !agent.mpc_url->empty();
+    json models = json::array();
+    json downloads = json::array();
+    std::string selected;
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+        selected = agent.model_name;
+        if (connected) {
+            json cat = agent.mpc_model_catalog(agent.backend);
+            json m = (cat.is_object() && cat.contains("models")) ? cat["models"] : json::array();
+            if (m.is_array()) models = m;
+        } else {
+
+            std::vector<std::string> installed = agent.list_usable_ollama_models();
+            for (const auto& name : installed) models.push_back(name);
+            for (const auto& q : QWYTHOS_QUANTS) {
+                bool inst = false;
+                for (const auto& n : installed) if (n == q.model) { inst = true; break; }
+                downloads.push_back(json{{"model", q.model}, {"size", q.size}, {"installed", inst}});
+            }
+        }
+    }
+    send_json(fd, 200, json{{"models", models},
+                            {"selected", selected},
+                            {"source", connected ? "mpc" : "local"},
+                            {"downloads", downloads}});
+}
+
+void handle_download(int fd, const std::string& body) {
+    json req;
+    if (!parse_json_body(body, req)) { send_json(fd, 400, json{{"error", "invalid json body"}}); return; }
+    std::string model = trim_copy(req.value("model", std::string("")));
+    bool known = false;
+    for (const auto& q : QWYTHOS_QUANTS) if (model == q.model) { known = true; break; }
+    if (!known) { send_json(fd, 400, json{{"error", "unknown model"}}); return; }
+    {
+        std::lock_guard<std::mutex> lk(g_dl.m);
+        if (g_dl.active) {
+            send_json(fd, 409, json{{"error", "a download is already running"}, {"model", g_dl.model}});
+            return;
+        }
+        g_dl.model = model; g_dl.status = "downloading"; g_dl.error.clear(); g_dl.active = true;
+    }
+    std::thread([model]() {
+
+        ProcResult r = run_subprocess({"ollama", "run", model, "hi"}, "", 3600.0, true);
+        std::lock_guard<std::mutex> lk(g_dl.m);
+        if (r.started && !r.timed_out && r.exit_code == 0) {
+            g_dl.status = "done";
+        } else {
+            g_dl.status = "error";
+            g_dl.error = r.timed_out ? "timed out"
+                         : (std::string("ollama run failed") +
+                            (r.out.empty() ? "" : ": " + r.out.substr(0, 200)));
+        }
+        g_dl.active = false;
+    }).detach();
+    send_json(fd, 200, json{{"started", true}, {"model", model}});
+}
+
+void handle_download_status(int fd) {
+    std::lock_guard<std::mutex> lk(g_dl.m);
+    send_json(fd, 200, json{{"model", g_dl.model}, {"status", g_dl.status},
+                            {"active", g_dl.active}, {"error", g_dl.error}});
+}
+
+void handle_select_model(LOREA& agent, int fd, const std::string& body) {
+    json req;
+    if (!parse_json_body(body, req)) { send_json(fd, 400, json{{"error", "invalid json body"}}); return; }
+    std::string model = trim_copy(req.value("model", std::string("")));
+    if (model.empty()) { send_json(fd, 400, json{{"error", "missing model"}}); return; }
+    bool connected = agent.mpc_url.has_value() && !agent.mpc_url->empty();
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+        if (connected) {
+            agent.select_mpc_model(agent.backend, model);
+        } else {
+            agent.model_name = model;
+        }
+    }
+    send_json(fd, 200, json{{"selected", agent.model_name}, {"source", connected ? "mpc" : "local"}});
+}
+
+void handle_uninstall(LOREA& agent, int fd, const std::string& body) {
+    json req;
+    if (!parse_json_body(body, req)) { send_json(fd, 400, json{{"error", "invalid json body"}}); return; }
+    std::string model = trim_copy(req.value("model", std::string("")));
+    if (model.empty()) { send_json(fd, 400, json{{"error", "missing model"}}); return; }
+    bool installed = false;
+    bool was_selected = false;
+    {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+        for (const auto& n : agent.list_ollama_models()) if (n == model) { installed = true; break; }
+        was_selected = (agent.model_name == model);
+    }
+    if (!installed) { send_json(fd, 404, json{{"error", "not an installed model"}}); return; }
+
+    {
+        std::lock_guard<std::mutex> lk(g_dl.m);
+        if (g_dl.active && g_dl.model == model) {
+            send_json(fd, 409, json{{"error", "that model is currently downloading"}});
+            return;
+        }
+    }
+    ProcResult r = run_subprocess({"ollama", "rm", model}, "", 60.0, true);
+    if (!(r.started && !r.timed_out && r.exit_code == 0)) {
+        send_json(fd, 500, json{{"error", r.timed_out ? std::string("timed out")
+                                 : std::string("ollama rm failed") +
+                                   (r.out.empty() ? "" : ": " + r.out.substr(0, 200))}});
+        return;
+    }
+
+    std::string fallback;
+    if (was_selected) {
+        std::lock_guard<std::mutex> lk(g_agent_mutex);
+
+        std::vector<std::string> rest = agent.list_usable_ollama_models();
+        agent.model_name = rest.empty() ? std::string("qwythos") : rest.front();
+        fallback = agent.model_name;
+    }
+    send_json(fd, 200, json{{"removed", true}, {"model", model},
+                            {"selected", fallback}});
 }
 
 bool term_send_all(int fd, const char* data, std::size_t len) {
@@ -642,7 +775,7 @@ std::string strip_terminal_wheel_reports(const std::string& data) {
     out.reserve(data.size());
     for (std::size_t i = 0; i < data.size();) {
         if (static_cast<unsigned char>(data[i]) == 0x1b && i + 2 < data.size() && data[i + 1] == '[') {
-            // SGR mouse mode: ESC [ < button ; x ; y M/m. Wheel buttons set bit 64.
+
             if (data[i + 2] == '<') {
                 std::size_t j = i + 3;
                 unsigned button = 0;
@@ -661,7 +794,7 @@ std::string strip_terminal_wheel_reports(const std::string& data) {
                     }
                 }
             }
-            // X10 mouse mode: ESC [ M cb cx cy. Wheel buttons also set bit 64.
+
             if (data[i + 2] == 'M' && i + 5 < data.size()) {
                 unsigned button = static_cast<unsigned char>(data[i + 3]);
                 if (button >= 32u) button -= 32u;
@@ -821,6 +954,26 @@ void route(LOREA& agent, int fd, const std::string& method,
         handle_disconnect(agent, fd);
         return;
     }
+    if (method == "GET" && path == "/api/models") {
+        handle_get_models(agent, fd);
+        return;
+    }
+    if (method == "POST" && path == "/api/model") {
+        handle_select_model(agent, fd, body);
+        return;
+    }
+    if (method == "POST" && path == "/api/download") {
+        handle_download(fd, body);
+        return;
+    }
+    if (method == "GET" && path == "/api/download_status") {
+        handle_download_status(fd);
+        return;
+    }
+    if (method == "POST" && path == "/api/uninstall") {
+        handle_uninstall(agent, fd, body);
+        return;
+    }
     if (method == "OPTIONS") {
         send_response(fd, 200, "text/plain", std::string());
         return;
@@ -830,8 +983,7 @@ void route(LOREA& agent, int fd, const std::string& method,
 
 void handle_client(LOREA& agent, int fd, int port) {
 #ifdef SO_NOSIGPIPE
-    // macOS/BSD: suppress SIGPIPE per-socket. On Linux this option doesn't exist;
-    // serve() ignores SIGPIPE process-wide instead, so writes just return EPIPE.
+
     int set = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &set, sizeof(set));
 #endif

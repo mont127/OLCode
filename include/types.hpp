@@ -1,3 +1,5 @@
+// Core aliases and types shared across the codebase (json, Message, ToolCall, Task).
+
 #pragma once
 
 #include <string>
@@ -31,6 +33,10 @@ struct EffortLevel {
     std::string label;
     std::string color;
     std::string directive;
+    // Drives the model's NATIVE reasoning block, not just the prompt wording. Sent to local
+    // backends as chat_template_kwargs.enable_thinking, which both llama-server and mlx_lm
+    // honour per request. false makes the chat template skip opening <think> entirely.
+    bool        think = true;
 };
 
 struct Task {
@@ -122,14 +128,14 @@ struct ShlexError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
-inline constexpr int    MAX_OUTPUT_LENGTH        = 10000;
+inline constexpr int    MAX_OUTPUT_LENGTH        = 240000;   // ~60k tokens: read a whole file, not the first 10k chars
 inline constexpr int    MAX_URL_OUTPUT_LENGTH    = 1500000;
-inline constexpr int    HISTORY_THRESHOLD        = 36;
-inline constexpr int    COMPACT_RECENT_MESSAGES  = 12;
-inline constexpr int    COMPACT_MAX_MESSAGE_CHARS= 2200;
-inline constexpr int    COMPACT_TOKEN_BUDGET     = 16000;
-inline constexpr int    COMPACT_RECENT_TOOL_CHARS= 4000;
-inline constexpr int    COMPACT_RECENT_TEXT_CHARS= 8000;
+inline constexpr int    HISTORY_THRESHOLD        = 200;
+inline constexpr int    COMPACT_RECENT_MESSAGES  = 40;
+inline constexpr int    COMPACT_MAX_MESSAGE_CHARS= 24000;
+inline constexpr int    COMPACT_TOKEN_BUDGET     = 96000;    // fallback only; local models report their own
+inline constexpr int    COMPACT_RECENT_TOOL_CHARS= 60000;   // keep whole files in recent context
+inline constexpr int    COMPACT_RECENT_TEXT_CHARS= 60000;
 inline constexpr int    COMPACT_SUMMARY_MAX_TOKENS = 700;
 inline constexpr int    SESSION_FORMAT_VERSION   = 1;
 inline constexpr const char* MPC_DEFAULT_URL     = "http://127.0.0.1:8765";

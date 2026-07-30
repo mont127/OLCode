@@ -1,3 +1,5 @@
+// Process entry point; forwards argv to ocli::run_main.
+
 #include <string>
 #include <vector>
 

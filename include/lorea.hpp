@@ -1,3 +1,5 @@
+// The LOREA agent class: backends, MPC, tools, planning and session state.
+
 #pragma once
 
 #include <string>
@@ -87,6 +89,7 @@ public:
                       bool keep_model = false);
     void  backend_menu();
     std::vector<std::string> list_ollama_models();
+    std::vector<std::string> list_usable_ollama_models();
     void  model_menu();
     void  vram_command(const std::string& arg_text = "");
     void  loop_command(const std::string& goal);
@@ -243,6 +246,7 @@ public:
     double                      session_started_at = 0.0;
     int                         session_tools_run = 0;
     int                         session_turns = 0;
+    std::string                 autosave_name;
     std::set<std::string>       session_files_touched;
     std::vector<UndoEntry>      undo_stack;
     std::vector<std::string>    prompt_history;
@@ -280,5 +284,9 @@ private:
 
 int run_spawn_agent_worker();
 int run_main(const std::vector<std::string>& argv);
+
+bool ollama_model_usable(const std::string& model);
+
+std::string first_usable_ollama_model();
 
 }

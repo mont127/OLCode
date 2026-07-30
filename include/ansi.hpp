@@ -1,3 +1,5 @@
+// ANSI colour/style codes and string helper declarations.
+
 #pragma once
 
 #include <string>
@@ -41,6 +43,7 @@ struct Colors {
     static constexpr const char* DIFF_ADD  = "\033[38;5;120m";
     static constexpr const char* DIFF_DEL  = "\033[38;5;210m";
     static constexpr const char* CODE      = "\033[38;5;252m";
+    static constexpr const char* SHADOW    = "\033[38;5;236m";
     static constexpr const char* BOLD      = "\033[1m";
     static constexpr const char* DIM       = "\033[2m";
     static constexpr const char* ITALIC    = "\033[3m";
@@ -52,7 +55,6 @@ extern const char* ACCENT;
 extern const char* MUTED;
 
 extern const std::vector<int>          FLAIR_RAMP;
-extern const std::vector<std::string>  CELEBRATION_ICONS;
 
 std::size_t              utf8_len(const std::string& s);
 
@@ -82,7 +84,6 @@ std::string status_label(const std::string& text, const char* style = nullptr);
 std::string gradient_text(const std::string& text, const std::vector<int>* ramp = nullptr,
                           bool bold = true);
 std::string progress_bar(double done, double total, int slots = 22, bool animate = false);
-std::string sparkle_line(int width = -1);
 void        celebrate(const std::string& title, const char* subtitle = nullptr,
                       const char* style = nullptr);
 std::string mode_value(bool enabled, const std::string& on = "on", const std::string& off = "off");
@@ -92,11 +93,11 @@ std::string truncate_visible(const std::string& text, int limit);
 
 std::vector<std::string> panel_lines(const std::string& title,
                                      const std::vector<std::string>& lines,
-                                     const char* style = Colors::CYAN);
+                                     const char* style = Colors::SLATE);
 void print_panel(const std::string& title, const std::vector<std::string>& lines,
-                 const char* style = Colors::CYAN);
-void print_frame_line(const std::string& text = "", const char* style = Colors::MAGENTA);
-void print_frame_text(const std::string& text, const char* style = Colors::MAGENTA);
+                 const char* style = Colors::SLATE);
+void print_frame_line(const std::string& text = "", const char* style = Colors::SLATE);
+void print_frame_text(const std::string& text, const char* style = Colors::SLATE);
 
 bool        can_use_terminal_keys();
 std::string raw_text(const std::string& text);

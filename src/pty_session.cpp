@@ -1,11 +1,13 @@
+// Pseudo-terminal session backing the dashboard's embedded terminal.
+
 #include "pty_session.hpp"
 
 #if defined(__APPLE__)
-#include <util.h>       // forkpty
+#include <util.h>
 #elif defined(__linux__)
-#include <pty.h>        // forkpty (link libutil)
+#include <pty.h>
 #else
-#include <libutil.h>    // BSD
+#include <libutil.h>
 #endif
 #include <termios.h>
 #include <sys/ioctl.h>
@@ -89,7 +91,7 @@ bool full_write(int fd, const char* data, std::size_t len) {
   return true;
 }
 
-}  // namespace
+}
 
 PtySession& PtySession::instance() {
   static PtySession s;
@@ -300,4 +302,4 @@ PtySession& terminal_session() {
   return s;
 }
 
-}  // namespace ocli
+}

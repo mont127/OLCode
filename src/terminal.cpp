@@ -1,3 +1,5 @@
+// Terminal mode control, size queries and the SIGWINCH resize handler.
+
 #include "terminal.hpp"
 #include "ansi.hpp"
 

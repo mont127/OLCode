@@ -1,3 +1,5 @@
+// Parses tool calls out of model output, including malformed-JSON recovery.
+
 #include "toolparse.hpp"
 #include "secutil.hpp"
 #include "ansi.hpp"

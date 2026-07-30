@@ -1,3 +1,5 @@
+// Model download flows (paths, prompts, progress) and the /loop command.
+
 #include "lorea.hpp"
 
 #include <string>
@@ -235,7 +237,7 @@ void LOREA::loop_command(const std::string& goal_in) {
     std::cout << "\n";
     if (stopped == "complete") {
         std::string sub = utf8_substr(goal, 0, 60) + (utf8_len(goal) > 60 ? "…" : "");
-        celebrate("LOOP COMPLETE", sub.c_str());
+        celebrate("Loop complete", sub.c_str());
     } else if (stopped == "interrupted") {
         log_info(std::string("Loop stopped. ") + Colors::DIM + Colors::GRAY +
                  "Type /loop <goal> to start again, or just keep chatting." + Colors::RESET);
@@ -310,7 +312,7 @@ std::string LOREA::model_download_default_dir(const std::string& model_name,
         return path_join("models", "airllm", name);
     }
     if (backend == "llama-cpp") {
-        // Always download GGUFs flat into ~/llama.cpp/models/
+
         return expanduser("~/llama.cpp/models");
     }
     return "";
@@ -373,7 +375,7 @@ std::optional<std::string> LOREA::run_model_download(const std::string& model_na
         std::string repo_or_name = find_hf_repo_for_model(model_name);
         if (ask_for_path && !truthy(download_dir))
             download_dir = prompt_download_dir(repo_or_name, url.value_or(""));
-        // Default destination: ~/llama.cpp/models (flat, not nested)
+
         std::string chosen = truthy(download_dir)
                                  ? *download_dir
                                  : expanduser("~/llama.cpp/models");
@@ -462,9 +464,9 @@ std::string LOREA::setup_llama_cpp() {
         std::vector<std::string> argv = {"clang", "--version"};
         ProcResult r = run_subprocess(argv);
         if (!r.started || r.exit_code != 0) {
-            std::cout << "  " << status_label("ERROR", Colors::RED)
+            std::cout << "  " << status_label("Error", Colors::RED)
                       << " Xcode Command Line Tools not found.\n";
-            std::cout << "  " << status_label("FIX", Colors::ORANGE) << " Run: "
+            std::cout << "  " << status_label("Fix", Colors::ORANGE) << " Run: "
                       << Colors::WHITE << "xcode-select --install" << Colors::RESET << "\n";
             return "Setup aborted: Xcode tools missing.";
         }
@@ -509,7 +511,7 @@ std::string LOREA::setup_llama_cpp() {
     run_cmd(model_setup);
 
     log_info("llama.cpp setup complete!");
-    std::cout << "\n  " << status_label("SUCCESS", Colors::GREEN) << " llama.cpp is ready!\n";
+    std::cout << "\n  " << status_label("Done", Colors::GREEN) << " llama.cpp is ready\n";
     std::cout << "  " << Colors::CYAN << "To start the server:" << Colors::RESET
               << " cd llama.cpp && ./build/bin/llama-server -m " << starter_path << "\n";
     std::cout << "  " << Colors::CYAN << "To use with LOREA:" << Colors::RESET
@@ -524,7 +526,7 @@ std::string LOREA::setup_mlx() {
                                          "mlx-lm", "huggingface_hub", "--break-system-packages"};
         ProcResult r = run_subprocess(argv);
         if (!r.started || r.exit_code != 0) {
-            std::cout << "  " << status_label("ERROR", Colors::RED)
+            std::cout << "  " << status_label("Error", Colors::RED)
                       << " Failed to install mlx-lm: " << called_process_error(argv, r) << "\n";
             return "Setup failed.";
         }
@@ -551,7 +553,7 @@ std::string LOREA::setup_mlx() {
     }
 
     log_info("MLX setup complete!");
-    std::cout << "\n  " << status_label("SUCCESS", Colors::GREEN) << " MLX (mlx-lm) is ready!\n";
+    std::cout << "\n  " << status_label("Done", Colors::GREEN) << " MLX (mlx-lm) is ready\n";
     std::cout << "  " << Colors::CYAN << "To start the server:" << Colors::RESET
               << " python3 -m mlx_lm.server --model " << model_dir << "\n";
     std::cout << "  " << Colors::CYAN << "To use with LOREA:" << Colors::RESET

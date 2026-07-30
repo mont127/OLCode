@@ -1,3 +1,5 @@
+// Markdown and code rendering API.
+
 #pragma once
 
 #include <string>
@@ -20,6 +22,10 @@ std::string render_text(const std::string& text);
 
 void fake_loading(const std::string& msg, double duration = 0.6);
 void log_tool(const std::string& msg);
+// log_info is plumbing chatter (server lifecycle, retries, parse fallbacks) and is
+// silent unless --debug was passed. Anything the user must act on uses log_warn.
+void set_debug_logging(bool on);
+bool debug_logging();
 void log_info(const std::string& msg);
 void log_ok(const std::string& msg);
 void log_warn(const std::string& msg);
@@ -36,9 +42,6 @@ void print_diff(const std::vector<std::string>& diff_lines);
 
 std::string gold_gradient(const std::string& text);
 void        glow_text(const std::string& text, int cycles = 3, double delay = 0.05);
-
-extern const std::vector<std::string> LOGO_PHRASES;
-std::optional<std::string> pick_logo_phrase();
 
 std::string              center_pad_logo(int cols, int text_len);
 int                      term_rows(int def = 24);
@@ -63,7 +66,6 @@ private:
     std::atomic<bool>                      running_{false};
     std::thread                            thread_;
     std::chrono::steady_clock::time_point  started_at_{};
-    std::string                            current_pulse_;
     int                                    last_len_ = 0;
 };
 

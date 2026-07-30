@@ -1,10 +1,11 @@
+// ANSI colour/style codes and string helpers used by all terminal output.
+
 #include "ansi.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <iostream>
-#include <random>
 #include <regex>
 #include <thread>
 
@@ -16,10 +17,8 @@ namespace ocli {
 const char* ACCENT = Colors::TEAL;
 const char* MUTED  = Colors::SLATE;
 
-const std::vector<int> FLAIR_RAMP = {51, 87, 159, 45, 118, 154, 226, 220, 208, 213, 201, 141, 99};
-
-const std::vector<std::string> CELEBRATION_ICONS = {
-    "✦", "✧", "⋆", "✶", "✷", "✸", "❉", "✺"};
+// The only gradient in the app: the wordmark's pale-green-to-cyan sweep.
+const std::vector<int> FLAIR_RAMP = {156, 120, 84, 48, 50, 51};
 
 namespace {
 
@@ -37,14 +36,6 @@ std::string repeat_str(const std::string& unit, int n) {
 
 long py_round(double x) {
     return static_cast<long>(std::nearbyint(x));
-}
-
-std::mt19937& rng() {
-    static std::mt19937 r{std::random_device{}()};
-    return r;
-}
-double rand01() {
-    return std::uniform_real_distribution<double>(0.0, 1.0)(rng());
 }
 
 std::vector<std::string> split_newline(const std::string& s) {
@@ -372,52 +363,16 @@ std::string progress_bar(double done, double total, int slots, bool animate) {
            Colors::RESET;
 }
 
-std::string sparkle_line(int width) {
-    int w = width;
-    if (w <= 0) w = term_width();
-    std::string out;
-    int rn = static_cast<int>(FLAIR_RAMP.size());
-    int icn = static_cast<int>(CELEBRATION_ICONS.size());
-    for (int i = 0; i < w; ++i) {
-        if (rand01() < 0.10) {
-            int shade = FLAIR_RAMP[std::uniform_int_distribution<int>(0, rn - 1)(rng())];
-            const std::string& icon =
-                CELEBRATION_ICONS[std::uniform_int_distribution<int>(0, icn - 1)(rng())];
-            out += "\033[38;5;" + std::to_string(shade) + "m" + icon;
-        } else {
-            out += " ";
-        }
-    }
-    return out + Colors::RESET;
-}
-
 void celebrate(const std::string& title, const char* subtitle, const char* style) {
     std::string indent = left_indent();
-    int width = term_width();
-    const char* st = or_default(style, Colors::GREEN);
-    std::string bar = std::string(st) + Colors::BOLD + repeat_str("━", width) + Colors::RESET;
-    auto centered = [&](const std::string& s) -> std::string {
-        int half = (width - static_cast<int>(clean_len(s))) / 2;
-        if (half < 0) half = 0;
-        return std::string(static_cast<std::size_t>(half), ' ') + s;
-    };
-    std::cout << "\n";
-    if (can_use_terminal_keys()) {
-        for (int i = 0; i < 3; ++i) {
-            std::cout << "\r" << indent << sparkle_line(width);
-            std::cout.flush();
-            std::this_thread::sleep_for(std::chrono::duration<double>(0.09));
-        }
-        std::cout << "\r\033[K";
-    }
-    std::cout << indent << bar << "\n";
-    std::cout << indent << centered(gradient_text(std::string("  ") + title + "  ")) << "\n";
+    const char* st = or_default(style, ACCENT);
+    std::cout << "\n"
+              << indent << st << Colors::BOLD << "▎" << Colors::RESET << " " << Colors::BOLD
+              << Colors::WHITE << title << Colors::RESET << "\n";
     if (subtitle && subtitle[0]) {
-        std::cout << indent
-                  << centered(std::string(Colors::DIM) + Colors::GRAY + subtitle + Colors::RESET)
+        std::cout << indent << "  " << Colors::DIM << Colors::GRAY << subtitle << Colors::RESET
                   << "\n";
     }
-    std::cout << indent << bar << "\n";
     std::cout << "\n";
 }
 
@@ -476,6 +431,10 @@ std::vector<std::string> panel_lines(const std::string& title,
     int inner_width = width - 4;
     std::string indent = left_indent();
     std::vector<std::string> out;
+    // Drop shadow: a half-block hugging the right border on every body row, and a
+    // matching one under the bottom border, both offset one cell right. Reads as
+    // depth on a dark terminal and costs one column, which term_width() leaves free.
+    const std::string shadow_edge = std::string(Colors::SHADOW) + "▌" + Colors::RESET;
     out.push_back(indent + frame_title(title, style));
     for (const std::string& line : lines) {
         std::vector<std::string> chunks = py_splitlines(line);
@@ -485,10 +444,11 @@ std::vector<std::string> panel_lines(const std::string& title,
             int padn = std::max(0, inner_width - static_cast<int>(clean_len(chunk)));
             out.push_back(indent + style + Colors::BOLD + "│" + Colors::RESET + " " + chunk +
                           std::string(static_cast<std::size_t>(padn), ' ') + " " + style +
-                          Colors::BOLD + "│" + Colors::RESET);
+                          Colors::BOLD + "│" + Colors::RESET + shadow_edge);
         }
     }
-    out.push_back(indent + frame_bottom(style));
+    out.push_back(indent + frame_bottom(style) + shadow_edge);
+    out.push_back(indent + " " + Colors::SHADOW + repeat_str("▀", width) + Colors::RESET);
     return out;
 }
 
@@ -512,13 +472,15 @@ void print_frame_line(const std::string& text, const char* style) {
         filtered.push_back((ch == U'\n' || ch >= 32) ? ch : U' ');
     std::string safe = u32_to_utf8(filtered);
 
+    // Matches the drop shadow panel_lines() draws, so framed output reads the same.
+    const std::string shadow_edge = std::string(Colors::SHADOW) + "▌" + Colors::RESET;
     std::vector<std::string> lines = split_newline(safe);
     if (lines.empty()) lines = {""};
     for (const std::string& ln : lines) {
         if (ln.empty()) {
             std::cout << indent << style << Colors::BOLD << "│" << Colors::RESET << " "
                       << std::string(static_cast<std::size_t>(std::max(0, inner_width)), ' ')
-                      << " " << style << Colors::BOLD << "│" << Colors::RESET << "\n";
+                      << " " << style << Colors::BOLD << "│" << Colors::RESET << shadow_edge << "\n";
             continue;
         }
         std::string line = ln;
@@ -528,7 +490,7 @@ void print_frame_line(const std::string& text, const char* style) {
             int padn = std::max(0, inner_width - static_cast<int>(clean_len(chunk)));
             std::cout << indent << style << Colors::BOLD << "│" << Colors::RESET << " "
                       << chunk << std::string(static_cast<std::size_t>(padn), ' ') << " " << style
-                      << Colors::BOLD << "│" << Colors::RESET << "\n";
+                      << Colors::BOLD << "│" << Colors::RESET << shadow_edge << "\n";
         }
     }
 }

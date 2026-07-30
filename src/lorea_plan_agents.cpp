@@ -1,3 +1,5 @@
+// Planning and task tracking, plus spawning sub-agent worker processes.
+
 #include "lorea.hpp"
 
 #include <string>
@@ -33,7 +35,6 @@ const char* const G_CARET  = "\xe2\x9d\xaf";
 const char* const G_PLAY   = "\xe2\x96\xb6";
 const char* const G_CHECK  = "\xe2\x9c\x93\xef\xb8\x8e";
 const char* const G_CIRCLE = "\xe2\x97\x8b";
-const char* const G_SPARK  = "\xe2\x9c\xa6";
 
 std::string py_str(const json& v) {
     if (v.is_string())  return v.get<std::string>();
@@ -219,7 +220,7 @@ void LOREA::print_tasks() {
     std::string sub = std::to_string(done) + "/" + std::to_string(total) + " done " +
                       G_DOT + " " + std::to_string(pct) + "%";
     std::cout << "\n" << indent
-              << frame_title("PLAN PROGRESS", Colors::TEAL, sub.c_str()) << "\n";
+              << frame_title("tasks", MUTED, sub.c_str()) << "\n";
 
     std::string bar = progress_bar((double)done, (double)total, 22);
     std::cout << indent << "  " << bar << " " << Colors::DIM << Colors::GRAY
@@ -243,7 +244,7 @@ void LOREA::print_tasks() {
         std::string number = std::string(Colors::DIM) + Colors::GRAY + rjust2(i + 1) + "." + Colors::RESET;
         std::cout << indent << "  " << icon << " " << number << " " << text << "\n";
     }
-    std::cout << indent << frame_bottom(Colors::TEAL) << "\n\n";
+    std::cout << indent << frame_bottom(MUTED) << "\n\n";
 }
 
 std::string LOREA::create_plan(const std::string& plan) {
@@ -255,7 +256,7 @@ std::string LOREA::create_plan(const std::string& plan) {
         std::string indent = left_indent();
         std::string sub = std::to_string(tasks.size()) + " steps";
         std::cout << "\n" << indent
-                  << frame_title("IMPLEMENTATION PLAN", Colors::GREEN, sub.c_str()) << "\n";
+                  << frame_title("plan", MUTED, sub.c_str()) << "\n";
         print_tasks();
 
         if (non_interactive || !can_use_terminal_keys()) {
@@ -309,14 +310,14 @@ std::string LOREA::update_task(const json& index, const std::string& status_in) 
         int total = (int)tasks.size();
         if (status == "done" && done < total) {
 
-            std::cout << left_indent() << Colors::GREEN << Colors::BOLD << G_SPARK << Colors::RESET
+            std::cout << left_indent() << Colors::GREEN << Colors::BOLD << G_CHECK << Colors::RESET
                       << " " << Colors::WHITE << "step " << (idx + 1) << " done" << Colors::RESET
                       << " " << Colors::DIM << Colors::GRAY << G_DOT << " " << done << "/" << total
-                      << " " << G_DOT << " keep going" << Colors::RESET << "\n";
+                      << Colors::RESET << "\n";
         }
         if (done == total) {
             std::string celeb_sub = "all " + std::to_string(total) + " steps finished";
-            celebrate("PLAN COMPLETE", celeb_sub.c_str(), Colors::GREEN);
+            celebrate("Plan complete", celeb_sub.c_str());
             return "Task " + std::to_string(idx + 1) + " marked " + status + ". All " +
                    std::to_string(total) +
                    " tasks are done — give the user a concise final summary of what changed and how to use it.";
@@ -378,8 +379,7 @@ json LOREA::spawn_agent_chat(const json& agent, const std::string& shared_contex
         {"effort_level", effort},
         {"workspace", workspace},
     };
-    // If this agent is connected to an MPC server, route the worker's turn
-    // through it too (so app/dashboard chat uses the connected remote model).
+
     if (mpc_url && !mpc_url->empty()) {
         payload["mpc_url"] = *mpc_url;
         if (mpc_token && !mpc_token->empty()) payload["mpc_token"] = *mpc_token;
@@ -536,7 +536,7 @@ std::string LOREA::spawn_agents(const json& agents_in, const std::string& shared
                 Colors::GRAY + "(" + py_str(result.at("status")) + ")" + Colors::RESET + ": " +
                 truncate_output(py_str(result.at("response")), 500));
         }
-        print_panel("SPAWNED AGENTS", summary_lines, Colors::CYAN);
+        print_panel("agents", summary_lines, MUTED);
 
         json arr = results;
         return SPAWN_RESULT_PREFIX + arr.dump(2);
@@ -844,15 +844,15 @@ void LOREA::agent_command(const std::string& arg_text) {
     }
 
     if (results.empty()) {
-        print_panel("agent coordinator", {truncate_output(result_text, 2000)}, Colors::CYAN);
+        print_panel("agent coordinator", {truncate_output(result_text, 2000)}, MUTED);
         return;
     }
 
     log_tool("AGENT_COORDINATOR");
     std::string final = coordinate_agent_results(goal, results);
-    std::cout << "\n" << left_indent() << frame_title("agent coordinator", Colors::CYAN) << "\n";
+    std::cout << "\n" << left_indent() << frame_title("agent coordinator", MUTED) << "\n";
     std::cout << render_text(final) << "\n";
-    std::cout << left_indent() << frame_bottom(Colors::CYAN) << "\n\n";
+    std::cout << left_indent() << frame_bottom(MUTED) << "\n\n";
     messages.push_back(json{{"role", "user"}, {"content", "/agent " + goal}});
     messages.push_back(json{{"role", "assistant"}, {"content", final}});
 }

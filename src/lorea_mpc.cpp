@@ -1,3 +1,5 @@
+// MPC client: connect/disconnect, saved credentials, remote model catalog and streaming chat.
+
 #include "lorea.hpp"
 
 #include <algorithm>
@@ -192,7 +194,7 @@ ConnectOpts LOREA::parse_connect_args(const std::string& arg_text) {
         }
         if (part == "--token" || part == "-t") {
             if (i + 1 >= parts.size()) {
-                log_info("Missing token after --token.");
+                log_warn("Missing token after --token.");
                 break;
             }
             opts.token = parts[i + 1];
@@ -365,7 +367,7 @@ void LOREA::connect_mpc_command(const std::string& arg_text) {
         ? std::string(" ") + Colors::DIM + Colors::GRAY + "v" + *mpc_version + Colors::RESET
         : std::string();
     log_ok(std::string("Connected to MPC server ") + Colors::WHITE + *mpc_url + Colors::RESET + vsuffix);
-    save_mpc_connection();   // persist url+token for auto-reconnect on next launch
+    save_mpc_connection();
     print_mpc_status(&status);
     sync_mpc_selection(status);
     if (!opts.status && !opts.no_menu) {
@@ -375,10 +377,8 @@ void LOREA::connect_mpc_command(const std::string& arg_text) {
 
 namespace {
 std::string mpc_conn_path() { return expanduser("~/.config/lorea/mpc_connection.json"); }
-}  // namespace
+}
 
-// Persist the current MPC url + token so a later launch reconnects without
-// re-typing (written 0600 since it holds a bearer token).
 void LOREA::save_mpc_connection() {
     if (!mpc_url || mpc_url->empty()) return;
     try {
@@ -409,9 +409,6 @@ void LOREA::clear_mpc_connection() {
     std::filesystem::remove(mpc_conn_path(), ec);
 }
 
-// Set the connection and verify it by fetching /status. Returns true only if the
-// server answers (so a stale/unreachable url leaves us on the local backend).
-// Shared by /connect, auto-reconnect, and the spawn-agent worker.
 bool LOREA::activate_mpc(const std::string& url, const std::string& token) {
     mpc_url = url;
     mpc_token = token.empty() ? std::nullopt : std::optional<std::string>(token);
@@ -432,7 +429,6 @@ bool LOREA::activate_mpc(const std::string& url, const std::string& token) {
     return true;
 }
 
-// On startup: reconnect to a previously saved connection if it is still reachable.
 void LOREA::auto_reconnect_mpc() {
     std::string url, token;
     if (!load_mpc_connection(url, token)) return;
@@ -456,7 +452,7 @@ bool LOREA::mpc_supports(const std::string& feature) {
 
 void LOREA::print_mpc_status(const json* status) {
     if (!mpc_url || mpc_url->empty()) {
-        log_info("No MPC server is connected.");
+        log_warn("No MPC server is connected.");
         return;
     }
     json st;
@@ -520,7 +516,7 @@ void LOREA::print_mpc_status(const json* status) {
 
 void LOREA::print_mpc_downloads() {
     if (!mpc_url || mpc_url->empty()) {
-        log_info("No MPC server is connected.");
+        log_warn("No MPC server is connected.");
         return;
     }
     json data;
@@ -533,7 +529,7 @@ void LOREA::print_mpc_downloads() {
     json jobs_v = jget(data, "downloads");
     json jobs = json_truthy(jobs_v) ? jobs_v : json::array();
     if (!jobs.is_array() || jobs.empty()) {
-        log_info("No MPC downloads have been started.");
+        log_warn("No MPC downloads have been started.");
         return;
     }
     std::vector<std::string> lines;
@@ -550,12 +546,12 @@ void LOREA::print_mpc_downloads() {
             lines.push_back(std::string("  ") + Colors::DIM + Colors::GRAY + path + Colors::RESET);
         }
     }
-    print_panel("mpc downloads", lines, Colors::CYAN);
+    print_panel("mpc downloads", lines, MUTED);
 }
 
 void LOREA::mpc_control_menu() {
     if (!mpc_url || mpc_url->empty()) {
-        log_info("No MPC server is connected.");
+        log_warn("No MPC server is connected.");
         return;
     }
     while (true) {
@@ -595,7 +591,7 @@ void LOREA::mpc_control_menu() {
 
 void LOREA::delete_mpc_model_menu() {
     if (!mpc_url || mpc_url->empty()) {
-        log_info("No MPC server is connected.");
+        log_warn("No MPC server is connected.");
         return;
     }
     auto backend_opt = choose_mpc_backend();
@@ -982,7 +978,7 @@ void LOREA::wait_for_mpc_download(const std::string& job_id) {
                     if (k > s0) shown += "\n";
                     shown += sl[k];
                 }
-                print_panel("mpc download log", {shown}, Colors::CYAN);
+                print_panel("mpc download log", {shown}, MUTED);
                 last_tail = tail;
             }
             if (status == "completed" || status == "failed" || status == "canceled") {

@@ -1,3 +1,5 @@
+// HTTP client and response types.
+
 #pragma once
 
 #include <string>
