@@ -629,7 +629,6 @@ bool LOREA::process_chat() {
                         sys_content += s;
                     };
                     for (auto& m : messages) add_sys(m);
-                    for (auto& m : ephemeral_reminders()) add_sys(m);
 
                     json ollama_messages = json::array();
                     if (!sys_content.empty()) {
@@ -640,9 +639,46 @@ bool LOREA::process_chat() {
                         if (get_str(m, "role") == "system") continue;
                         ollama_messages.push_back(m);
                     }
+                    // Per-turn reminders go at the tail, not into the head system message, so
+                    // the prompt prefix stays stable and ollama's context caching can reuse it.
+                    std::string reminder_sys;
                     for (auto& m : ephemeral_reminders()) {
-                        if (get_str(m, "role") == "system") continue;
-                        ollama_messages.push_back(m);
+                        if (get_str(m, "role") == "system") {
+                            std::string s = get_str(m, "content");
+                            if (s.empty()) continue;
+                            if (!reminder_sys.empty()) reminder_sys += "\n\n";
+                            reminder_sys += s;
+                        } else {
+                            ollama_messages.push_back(m);
+                        }
+                    }
+                    if (!reminder_sys.empty()) {
+                        // NOT a trailing system message. Several chat templates reject any
+                        // system message that is not first - qwen3.8 answers with
+                        // HTTP 500 {"error":"system message must be at the beginning"} and
+                        // never generates a token. Qwythos happens to tolerate it, which is
+                        // why this only showed up when switching models.
+                        //
+                        // Deliver the reminders as a user turn instead, merged into the
+                        // preceding user message when there is one so we also never emit two
+                        // user turns in a row (templates enforcing strict alternation reject
+                        // that as well). Both forms leave the prompt prefix untouched, so
+                        // ollama's context cache still reuses it - the point of putting these
+                        // at the tail in the first place.
+                        bool merged = false;
+                        if (!ollama_messages.empty()) {
+                            json& last = ollama_messages.back();
+                            if (get_str(last, "role") == "user") {
+                                last["content"] = get_str(last, "content") + "\n\n" + reminder_sys;
+                                merged = true;
+                            }
+                        }
+                        if (!merged) {
+                            json rem = json::object();
+                            rem["role"] = "user";
+                            rem["content"] = reminder_sys;
+                            ollama_messages.push_back(std::move(rem));
+                        }
                     }
                     json body = json::object();
                     body["model"] = model_name;
@@ -717,6 +753,11 @@ bool LOREA::process_chat() {
                         // paragraph-scale loops are actually visible to the penalty.
                         payload["repetition_context_size"] = 400;
                         payload["max_tokens"] = LOCAL_MAX_TOKENS;
+                        // llama-server runs with --jinja, so the chat template presents these
+                        // schemas natively and the stream carries parsed tool_calls deltas.
+                        // Models whose template has no tool support keep working through the
+                        // text-protocol parsers after the stream ends.
+                        if (backend == "llama-cpp") payload["tools"] = tools;
                     }
                     req.headers = {{"Content-Type", "application/json"}};
                     if (backend == "openai") {

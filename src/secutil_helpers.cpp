@@ -100,6 +100,8 @@ const std::string LOREA_CYBER_GGUF =
 
 const std::string QWYTHOS_GGUF =
     expanduser("~/models/Qwythos-9B-Claude-Mythos-5-1M-Q4_K_M.gguf");
+const std::string QWYTHOS27_GGUF =
+    expanduser("~/models/Qwythos-27B-Q4_K_M.gguf");
 
 const std::string LOREA_RE_V3 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-v3-re");
 const std::string LOREA_DIR = path_is_dir(LOREA_RE_V3) ? LOREA_RE_V3 : LOREA_CYBER_DIR;
@@ -170,6 +172,7 @@ const std::vector<std::string> GGUF_MODELS = []() {
     // The local v5.8 build heads the list when it is actually present; the entry is dropped
     // if the external volume is unmounted, the same way MLX_MODELS filters dead paths.
     LOREA_CYBER_GGUF,
+    QWYTHOS27_GGUF,
     "MK4-Research/LOREA-cyber-v5.8",
     "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", "bartowski/Llama-3.1-8B-Instruct-GGUF",
     "bartowski/Llama-3.2-3B-Instruct-GGUF", "bartowski/Llama-3.3-70B-Instruct-GGUF",

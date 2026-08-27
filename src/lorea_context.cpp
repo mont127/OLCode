@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <unistd.h>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -391,7 +392,8 @@ void LOREA::sync_context_budget() {
         try { return static_cast<long>(std::stod(s) * mult); } catch (...) { return 0; }
     };
     long ctx = 0;
-    if (const char* e = std::getenv("LOREA_CONTEXT")) ctx = parse_ctx(e);
+    bool explicit_ctx = false;
+    if (const char* e = std::getenv("LOREA_CONTEXT")) { ctx = parse_ctx(e); explicit_ctx = ctx > 0; }
     if (ctx <= 0) {
         // A local model directory knows its own context length. Read it instead of guessing
         // from the name (name matching silently gave new models the 16k default).
@@ -421,6 +423,31 @@ void LOREA::sync_context_budget() {
         }
     }
     if (ctx <= 0) ctx = COMPACT_TOKEN_BUDGET;
+    // Clamp an auto-derived context to what fits next to the weights. llama-server
+    // allocates the whole KV cache up front, and the name-matched 64k default is several
+    // GB of KV on a 27B — on a 32 GB machine that is the difference between a stable
+    // server and a Metal OOM abort mid-conversation followed by a silent multi-minute
+    // model reload. LOREA_CONTEXT skips the clamp for machines with real headroom.
+    if (!explicit_ctx && backend == "llama-cpp") {
+        if (auto gguf = resolve_gguf_path(model_name)) {
+            std::error_code fec;
+            std::uintmax_t fsz = std::filesystem::file_size(*gguf, fec);
+            long long ram = (long long)sysconf(_SC_PHYS_PAGES) * (long long)sysconf(_SC_PAGE_SIZE);
+            if (!fec && ram > 0) {
+                const long long GiB = 1024LL * 1024 * 1024;
+                long long headroom = ram - (long long)fsz - 6 * GiB;   // OS + app reserve
+                long cap = headroom >= 12 * GiB ? 0
+                         : headroom >= 6 * GiB  ? 32768
+                                                : 16384;
+                if (cap > 0 && ctx > cap) {
+                    log_info("Context clamped to " + std::to_string(cap) + " for " +
+                             std::filesystem::path(*gguf).filename().string() +
+                             " (weights + KV cache must fit in RAM; set LOREA_CONTEXT to override).");
+                    ctx = cap;
+                }
+            }
+        }
+    }
     if (ctx < 2000) ctx = 2000;
     if (ctx > 4000000) ctx = 4000000;
     context_budget = static_cast<int>(ctx);
@@ -992,13 +1019,6 @@ std::vector<Message> LOREA::server_messages() {
         if (role == "system") append_system(content_or_empty(message));
     }
 
-    for (const auto& r : ephemeral_reminders()) {
-        std::string role;
-        const json* rp = find_key(r, "role");
-        if (rp && rp->is_string()) role = rp->get<std::string>();
-        if (role == "system") append_system(content_or_empty(r));
-    }
-
     if (!system_content.empty()) {
         json sys = json::object();
         sys["role"] = "system";
@@ -1069,12 +1089,54 @@ std::vector<Message> LOREA::server_messages() {
         }
     }
 
+    // Reminders change every turn (recent tool results, plan state). Keeping them at the
+    // tail instead of merged into the head system message leaves the prompt prefix stable
+    // across turns, so llama-server/ollama prompt caching reuses the history's KV instead
+    // of re-prefilling the whole conversation each round.
+    std::string reminder_content;
+    std::vector<Message> reminder_tail;
     for (auto& r : ephemeral_reminders()) {
         std::string role;
         const json* rp = find_key(r, "role");
         if (rp && rp->is_string()) role = rp->get<std::string>();
-        if (role != "system") prepared.push_back(std::move(r));
+        if (role == "system") {
+            std::string s = content_or_empty(r);
+            if (s.empty()) continue;
+            if (!reminder_content.empty()) reminder_content += "\n\n";
+            reminder_content += s;
+        } else {
+            reminder_tail.push_back(std::move(r));
+        }
     }
+    if (!reminder_content.empty()) {
+        // NOT a trailing system message. Several chat templates reject any system
+        // message that is not first: qwen3.8 answers the request with
+        // {"error":"System message must be at the beginning."} and never generates a
+        // token, so the turn comes back empty. Qwythos tolerates it, which is why this
+        // only appears after switching models.
+        //
+        // Deliver the reminders as a user turn instead, merged into the preceding user
+        // message when there is one so we also never emit two user turns in a row -
+        // templates that enforce strict alternation reject that as well. Both forms
+        // leave the prompt prefix untouched, which is the reason these sit at the tail
+        // rather than in the head system message, so prompt caching still reuses it.
+        bool merged = false;
+        if (!prepared.empty()) {
+            json& last = prepared.back();
+            const json* rp = find_key(last, "role");
+            if (rp && rp->is_string() && rp->get<std::string>() == "user") {
+                last["content"] = content_or_empty(last) + "\n\n" + reminder_content;
+                merged = true;
+            }
+        }
+        if (!merged) {
+            json rem = json::object();
+            rem["role"] = "user";
+            rem["content"] = reminder_content;
+            prepared.push_back(std::move(rem));
+        }
+    }
+    for (auto& r : reminder_tail) prepared.push_back(std::move(r));
 
     return prepared;
 }

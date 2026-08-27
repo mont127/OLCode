@@ -744,10 +744,13 @@ std::string LOREA::run_cmd(const std::string& command) {
             if (py_strip(captured).empty()) {
                 return std::string(
                     "Command Output: (no output) — the command ran and produced nothing on "
-                    "stdout/stderr. For a search such as grep this means NO MATCHES were found, "
-                    "which is a complete, valid result. Do NOT re-run the same command: either "
-                    "broaden/adjust the pattern, try a different path, or tell the user that "
-                    "nothing was found.");
+                    "stdout/stderr, and no exit code is available on this path. Empty output is a "
+                    "complete result for a search (grep, find): treat it as NO MATCHES and do not "
+                    "re-run the same command. But a program that was expected to print something "
+                    "and printed nothing may have failed silently (an unhandled exception, a "
+                    "swallowed error, wrong types). If you expected output, do not assume success: "
+                    "add a print of the result or the exception, or re-run with stderr shown, "
+                    "before drawing a conclusion.");
             }
             return std::string("Command Output:\n") + captured;
         }
@@ -792,12 +795,24 @@ std::string LOREA::run_cmd(const std::string& command) {
         interrupter.stop_listening();
         std::string joined = join_strings(output);
         if (py_strip(joined).empty()) {
+            if (returncode == 0) {
+                return std::string(
+                    "Command Output: (no output) — the command ran and exited 0 with nothing on "
+                    "stdout/stderr. For a search such as grep this means NO MATCHES were found, a "
+                    "complete, valid result; do NOT re-run the same command, instead broaden the "
+                    "pattern, try a different path, or report that nothing was found. Note: a "
+                    "program you expected to print a result but that printed nothing while still "
+                    "exiting 0 may have swallowed an error — if you expected output, print the "
+                    "result or exception explicitly rather than assuming success.");
+            }
             return std::string(
-                "Command Output: (no output) — the command ran and produced nothing on "
-                "stdout/stderr (exit code ") + std::to_string(returncode) +
-                "). For a search such as grep this means NO MATCHES were found, which is a "
-                "complete, valid result. Do NOT re-run the same command: either broaden/adjust "
-                "the pattern, try a different path, or tell the user that nothing was found.";
+                "Command Output: (no output on stdout/stderr, but the command exited NONZERO: "
+                "code ") + std::to_string(returncode) +
+                "). This is a FAILURE, not an empty search result. The program errored without "
+                "printing why — likely an unhandled exception, a syntax error, or a crash before "
+                "output. Do not report a conclusion from this run. Re-run so the error is visible "
+                "(for a Python snippet, ensure the exception is printed or let it propagate; add "
+                "'2>&1' if stderr was hidden), then act on the actual error.";
         }
         return std::string("Command Output:\n") + joined;
     } catch (const std::exception& e) {

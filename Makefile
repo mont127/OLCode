@@ -16,6 +16,7 @@ install: build
 	@install -m 0755 search_backend.py "$(BINDIR)/search_backend.py"
 	@install -m 0755 nvidia_backend.py "$(BINDIR)/nvidia_backend.py"
 	@install -m 0755 install_qwythos.sh "$(BINDIR)/install_qwythos.sh"
+	@install -m 0755 install_qwythos27b.sh "$(BINDIR)/install_qwythos27b.sh"
 	@install -m 0755 mcpserver.py "$(BINDIR)/mcpserver.py"
 	@echo "Installed: $(BINDIR)/ocli  (+ search_backend.py, nvidia_backend.py, install_qwythos.sh, mcpserver.py alongside it)"
 	@case ":$$PATH:" in *":$(BINDIR):"*) echo "Run it from anywhere:  ocli" ;; \

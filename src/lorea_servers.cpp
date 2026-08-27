@@ -213,8 +213,20 @@ void LOREA::ensure_mlx_server() {
 
 std::optional<std::string> LOREA::find_llama_server_bin() {
     std::error_code ec;
+    // Executability on disk is not enough: a build copied from another machine can carry a
+    // dead rpath and die inside dyld the instant it launches (seen with a ~/llama.cpp build
+    // whose rpath pointed into another user's home). Confirm the binary actually runs, or
+    // every later chat turn spawns a corpse and waits on a server that never comes up.
+    auto runs_ok = [&](const std::string& c) -> bool {
+        if (c.empty() || !fs::is_regular_file(c, ec) || ::access(c.c_str(), X_OK) != 0)
+            return false;
+        try {
+            ProcResult r = run_subprocess({c, "--version"}, "", 10.0, false);
+            return r.started && !r.timed_out && r.exit_code == 0;
+        } catch (...) { return false; }
+    };
     const char* envbin = std::getenv("LLAMA_SERVER_BIN");
-    if (envbin && *envbin && fs::is_regular_file(envbin, ec) && ::access(envbin, X_OK) == 0) {
+    if (envbin && *envbin && runs_ok(envbin)) {
         return std::string(envbin);
     }
     // Checked BEFORE `which`, deliberately. The Homebrew llama-server is usually older and
@@ -226,7 +238,7 @@ std::optional<std::string> LOREA::find_llama_server_bin() {
         expanduser("~/llama.cpp/build/bin/llama-server"),
     };
     for (const std::string& c : preferred) {
-        if (!c.empty() && fs::is_regular_file(c, ec) && ::access(c.c_str(), X_OK) == 0) {
+        if (runs_ok(c)) {
             return c;
         }
     }
@@ -234,7 +246,7 @@ std::optional<std::string> LOREA::find_llama_server_bin() {
     try {
         ProcResult r = run_subprocess({"which", "llama-server"}, "", 5.0, false);
         std::string out = strip(r.out);
-        if (!out.empty() && fs::is_regular_file(out, ec) && ::access(out.c_str(), X_OK) == 0) {
+        if (!out.empty() && runs_ok(out)) {
             return out;
         }
     } catch (...) {}
@@ -246,7 +258,7 @@ std::optional<std::string> LOREA::find_llama_server_bin() {
         expanduser("~/llama.cpp/build/bin/llama-server")
     };
     for (const std::string& c : cands) {
-        if (!c.empty() && fs::is_regular_file(c, ec) && ::access(c.c_str(), X_OK) == 0) {
+        if (runs_ok(c)) {
             return c;
         }
     }
@@ -288,8 +300,11 @@ void LOREA::ensure_llamacpp_server() {
 
     log_info("Auto-starting llama.cpp server: " + fs::path(model).filename().string());
     int server_ctx = std::max(4096, context_budget);
+    // --jinja renders requests through the model's own chat template, which is what lets
+    // Qwen-family models (Qwythos etc.) take native `tools` schemas and have the server
+    // parse their <tool_call> output into structured OpenAI-style tool_calls deltas.
     std::vector<std::string> cmd = {*binpath, "-m", model, "-ngl", "99",
-                                    "-c", std::to_string(server_ctx),
+                                    "-c", std::to_string(server_ctx), "--jinja",
                                     "--host", host, "--port", std::to_string(port)};
     try {
         server_process = spawn_process(cmd, true);

@@ -425,6 +425,21 @@ int run_main(const std::vector<std::string>& argv) {
         }
     }
 
+    // Same check app mode already does, but for the CLI. `ollama list` reads manifests, so a
+    // model whose blobs have been deleted still appears installed with its full size; the
+    // failure only shows up per-request as HTTP 404 "model not found", which reads like the
+    // agent is broken rather than the weights being gone. Say so plainly instead.
+    if (!app_mode && backend == "ollama" && !ollama_model_usable(chosen_model)) {
+        std::cerr << prog << ": ollama has no usable weights for '" << chosen_model
+                  << "'.\n       It may still appear in `ollama list` - that reads manifests, "
+                     "not the\n       weight blobs. Pull it again:\n\n"
+                  << "         ollama pull " << chosen_model << "\n";
+        std::string alt = first_usable_ollama_model();
+        if (!alt.empty())
+            std::cerr << "\n       Or use one that is loadable now: --model " << alt << "\n";
+        std::cerr << "\n";
+    }
+
     std::optional<std::string> url_opt;
     if (has_url) url_opt = url;
 
