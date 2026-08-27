@@ -67,6 +67,10 @@ std::string last_segment(const std::string& s) {
 // ~/loreacyber-ft; the older 30B builds were in ~/lorea-ft,
 // which no longer exists on this machine (every check below it fails and we fell through to a
 // dead path, which is why /model offered a directory that could not be loaded).
+// Terminal fallback: a Hugging Face repo id, not a path. mlx-lm resolves and downloads it on
+// first use, the same way the mlx-community entries in MLX_MODELS work. Without this, a machine
+// with none of the local builds fell through to a directory that does not exist.
+const std::string CYBER_V6P_HUB = "MK4-Research/LOREA-cyber-v6-pilot";
 const std::string CYBER_V6P = "/Volumes/ASAFE/LOREA-cyber-v6-pilot";
 const std::string CYBER_V59 = "/Volumes/ASAFE/LOREA-cyber-v5.9";
 const std::string CYBER_V58 = expanduser("~/loreacyber-ft/LOREA-cyber-v5.8");
@@ -84,7 +88,7 @@ const std::string LOREA_CYBER_DIR =
     : path_is_dir(CYBER_V42) ? CYBER_V42
     : path_is_dir(CYBER_V41) ? CYBER_V41
     : path_is_dir(CYBER_V3)  ? CYBER_V3
-    : expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber");
+    : CYBER_V6P_HUB;
 
 // v5.8, merged into the bf16 base and quantised once (not a re-quantise of the 4-bit MLX
 // build). 21.7 GB, so it lives on the external volume - the internal disk has no room for
