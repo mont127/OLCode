@@ -63,9 +63,12 @@ std::string last_segment(const std::string& s) {
     return (p == std::string::npos) ? s : s.substr(p + 1);
 }
 
-// Newest first. v5.8/v5.5 live under ~/loreacyber-ft; the older 30B builds were in ~/lorea-ft,
+// Newest first. v6 Pilot and v5.9 live on the external volume; v5.8/v5.5 under
+// ~/loreacyber-ft; the older 30B builds were in ~/lorea-ft,
 // which no longer exists on this machine (every check below it fails and we fell through to a
 // dead path, which is why /model offered a directory that could not be loaded).
+const std::string CYBER_V6P = "/Volumes/ASAFE/LOREA-cyber-v6-pilot";
+const std::string CYBER_V59 = "/Volumes/ASAFE/LOREA-cyber-v5.9";
 const std::string CYBER_V58 = expanduser("~/loreacyber-ft/LOREA-cyber-v5.8");
 const std::string CYBER_V55 = expanduser("~/loreacyber-ft/LOREA-cyber-v5.5");
 const std::string CYBER_V51 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v5-1");
@@ -73,7 +76,9 @@ const std::string CYBER_V42 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v
 const std::string CYBER_V41 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v4-1");
 const std::string CYBER_V3  = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v3");
 const std::string LOREA_CYBER_DIR =
-      path_is_dir(CYBER_V58) ? CYBER_V58
+      path_is_dir(CYBER_V6P) ? CYBER_V6P
+    : path_is_dir(CYBER_V59) ? CYBER_V59
+    : path_is_dir(CYBER_V58) ? CYBER_V58
     : path_is_dir(CYBER_V55) ? CYBER_V55
     : path_is_dir(CYBER_V51) ? CYBER_V51
     : path_is_dir(CYBER_V42) ? CYBER_V42
