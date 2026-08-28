@@ -72,6 +72,10 @@ std::string last_segment(const std::string& s) {
 // with none of the local builds fell through to a directory that does not exist.
 const std::string CYBER_V6P_HUB = "MK4-Research/LOREA-cyber-v6-pilot";
 const std::string CYBER_V6P = "/Volumes/ASAFE/LOREA-cyber-v6-pilot";
+// Ginko v1: guard-discrimination tune. Better than Pilot at deciding whether guarded code is
+// really vulnerable, but it reports one finding per file - keep Pilot for whole-file reviews.
+const std::string GINKO_HUB = "MK4-Research/MK4-Ginko-v1";
+const std::string GINKO_DIR = "/Volumes/ASAFE/MK4-Ginko";
 const std::string CYBER_V59 = "/Volumes/ASAFE/LOREA-cyber-v5.9";
 const std::string CYBER_V58 = expanduser("~/loreacyber-ft/LOREA-cyber-v5.8");
 const std::string CYBER_V55 = expanduser("~/loreacyber-ft/LOREA-cyber-v5.5");
@@ -80,7 +84,8 @@ const std::string CYBER_V42 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v
 const std::string CYBER_V41 = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v4-1");
 const std::string CYBER_V3  = expanduser("~/lorea-ft/lorea-coder-30b-a3b-cyber-v3");
 const std::string LOREA_CYBER_DIR =
-      path_is_dir(CYBER_V6P) ? CYBER_V6P
+      path_is_dir(GINKO_DIR) ? GINKO_DIR
+    : path_is_dir(CYBER_V6P) ? CYBER_V6P
     : path_is_dir(CYBER_V59) ? CYBER_V59
     : path_is_dir(CYBER_V58) ? CYBER_V58
     : path_is_dir(CYBER_V55) ? CYBER_V55
@@ -140,6 +145,8 @@ const std::vector<std::string> OLLAMA_MODELS = {
 const std::vector<std::string> MLX_MODELS = []() {
     std::vector<std::string> all = {
     LOREA_CYBER_DIR, LOREA_DIR,
+    GINKO_DIR, GINKO_HUB,
+    CYBER_V6P, CYBER_V6P_HUB,
     "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
     "mlx-community/Qwen3.5-2B-OptiQ-4bit",
     "mlx-community/Qwen3.5-4B-OptiQ-4bit",
