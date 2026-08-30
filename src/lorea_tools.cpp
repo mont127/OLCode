@@ -1021,7 +1021,10 @@ std::string LOREA::grep(const std::string& pattern_in, const std::string& path) 
         log_tool(std::string("Grep: ") + pattern);
         std::string q_pat = shlex_quote(pattern);
         std::string q_path = shlex_quote(path.empty() ? std::string(".") : path);
-        return run_cmd("grep -rIn -e " + q_pat + " " + q_path +
+        // -E, not -e: models reach for alternation ("foo|bar") as the natural way to search
+        // several related terms. Under basic regex `|` is a literal pipe, so those searches
+        // silently returned zero matches and the model retried the same query in a loop.
+        return run_cmd("grep -rInE -e " + q_pat + " " + q_path +
                        " --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=node_modules | head -n 50");
     } catch (const std::exception& e) {
         if (is_control_flow_exc(e)) throw;
@@ -1575,7 +1578,7 @@ json LOREA::build_tools_schema() {
         {"type":"function","function":{"name":"list_files","description":"List files and directories in a path (tree view, max depth 3).","parameters":{"type":"object","properties":{"path":{"type":"string","default":"."}},"required":[]}}},
         {"type":"function","function":{"name":"search_files","description":"Find files by name pattern.","parameters":{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string","default":"."}},"required":["query"]}}},
         {"type":"function","function":{"name":"find_files","description":"Alias for search_files. Find files by name pattern.","parameters":{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string","default":"."}},"required":["query"]}}},
-        {"type":"function","function":{"name":"grep","description":"Search file contents for a pattern (like grep -rIn).","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","default":"."}},"required":["pattern"]}}},
+        {"type":"function","function":{"name":"grep","description":"Search file contents for an extended regex (grep -rInE). Alternation like 'foo|bar' works.","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","default":"."}},"required":["pattern"]}}},
         {"type":"function","function":{"name":"git_status","description":"Show git status of the current repo.","parameters":{"type":"object","properties":{},"required":[]}}},
         {"type":"function","function":{"name":"git_diff","description":"Show git diff of changes. Optionally for a specific file.","parameters":{"type":"object","properties":{"path":{"type":"string","default":""}},"required":[]}}},
         {"type":"function","function":{"name":"http_request","description":"Send an HTTP request WITHOUT a shell, for authorized local web pentesting. Use this instead of curl-via-run_cmd whenever a payload contains quotes/spaces (e.g. SQL injection admin' --): pass the payload as a structured field and it is sent verbatim, no shell quoting to get wrong. Keeps a cookie jar across calls and follows redirects, so a successful login lands on the post-auth page and returns its body. Scope: loopback/LAN only by default.","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Target URL, e.g. http://127.0.0.1:8000/login"},"method":{"type":"string","description":"GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS","default":"GET"},"data":{"type":"object","description":"Form fields, e.g. {\"username\":\"admin' --\",\"password\":\"x\"} (sent url-encoded). May also be a raw string body."},"json_body":{"type":"object","description":"Object to send as a JSON request body instead of form data."},"params":{"type":"object","description":"Querystring parameters."},"headers":{"type":"object","description":"Request headers."}},"required":["url"]}}}
